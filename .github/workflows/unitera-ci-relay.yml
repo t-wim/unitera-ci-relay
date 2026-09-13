@@ -1,0 +1,369 @@
+name: Unitera Canonical CI Relay
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Exact Unitera_Systems head SHA"
+        required: true
+        type: string
+      base_sha:
+        description: "Exact Unitera_Systems base SHA for append-only verification"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unitera-relay-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  canonical-ci:
+    name: Unitera Canonical Required Gates
+
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - unitera-ci
+      - relay
+
+    timeout-minutes: 90
+
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      BASE_SHA: ${{ inputs.base_sha }}
+      NODE_VERSION: "24"
+      PNPM_VERSION: "10.5.2"
+
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for value in "$SOURCE_SHA" "$BASE_SHA"; do
+            if [[ ! "$value" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::source_sha and base_sha must be exact 40-character lowercase commit SHAs"
+              exit 2
+            fi
+          done
+
+          echo "SOURCE_SHA=$SOURCE_SHA"
+          echo "BASE_SHA=$BASE_SHA"
+
+      - name: Prepare exact Unitera source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_DIR="$RUNNER_TEMP/unitera-source"
+
+          rm -rf "$SOURCE_DIR"
+          mkdir -p "$SOURCE_DIR"
+
+          git -C "$SOURCE_DIR" init
+          git -C "$SOURCE_DIR" remote add origin \
+            git@github-unitera-systems:baum777/Unitera_Systems.git
+
+          git -C "$SOURCE_DIR" fetch \
+            --no-tags \
+            origin "$SOURCE_SHA" "$BASE_SHA"
+
+          git -C "$SOURCE_DIR" checkout --detach "$SOURCE_SHA"
+
+          ACTUAL_SHA="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
+
+          test "$ACTUAL_SHA" = "$SOURCE_SHA"
+          test -z "$(git -C "$SOURCE_DIR" status --porcelain)"
+
+          echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
+          echo "EXACT_SHA_BINDING_PASS"
+
+      - name: Verify toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          node --version
+          corepack pnpm --version
+          docker version
+
+          test "$(corepack pnpm --version)" = "10.5.2"
+
+      - name: Install dependencies
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+          corepack pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+          corepack pnpm build:packages
+
+      - name: Lint
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+          corepack pnpm lint
+
+      - name: Build API
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+          corepack pnpm --filter @unitera/api build
+
+      - name: Typecheck Web
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+          corepack pnpm --filter @unitera/web exec tsc --noEmit
+
+      - name: API tests with coverage
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+          corepack pnpm --filter @unitera/api exec vitest run --coverage
+
+      - name: Secret scan
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+          corepack pnpm secret:scan
+
+      - name: Verify Vorgänge append-only
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        env:
+          VORGAENGE_BASE_REF: ${{ inputs.base_sha }}
+        run: |
+          set -euo pipefail
+          corepack pnpm codex:check:vorgaenge
+
+      - name: Verify vendor integrity
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+          cd vendor/unitera-os/0.1.0
+          sha256sum -c artifacts.sha256
+
+      - name: Proxy security
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+
+          corepack pnpm exec vitest run \
+            apps/api/src/security/hosted-proxy-auth.spec.ts \
+            apps/api/src/security/hosted-proxy-nonce.store.spec.ts \
+            apps/api/src/security/hosted-public-host.spec.ts \
+            apps/web/lib/hosted-auth-config.spec.ts \
+            apps/web/lib/hosted-auth-proxy.spec.ts
+
+      - name: Hosted auth runtime
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+
+          rm -f /tmp/testcontainers-node.lock || true
+          corepack pnpm test:api:integration:hosted-auth-runtime
+
+      - name: Hosted auth migration upgrade
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+
+          rm -f /tmp/testcontainers-node.lock || true
+          corepack pnpm test:api:integration:hosted-auth-migration-upgrade
+
+      - name: PostgreSQL integration
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+
+          cleanup_pg() {
+            docker rm -f unitera-relay-postgres >/dev/null 2>&1 || true
+          }
+
+          trap cleanup_pg EXIT
+          cleanup_pg
+
+          docker run -d \
+            --name unitera-relay-postgres \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=unitera_test \
+            -p 55432:5432 \
+            postgres:16
+
+          for attempt in $(seq 1 60); do
+            if docker exec unitera-relay-postgres \
+              pg_isready -U postgres -d unitera_test >/dev/null 2>&1; then
+              break
+            fi
+
+            if [ "$attempt" -eq 60 ]; then
+              docker logs unitera-relay-postgres
+              exit 1
+            fi
+
+            sleep 1
+          done
+
+          DATABASE_URL='postgresql://postgres:postgres@localhost:55432/unitera_test' \
+          UNITERA_TESTCONTAINERS=1 \
+            corepack pnpm test:review
+
+      - name: E2E API Auth Runtime
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+
+          rm -f /tmp/testcontainers-node.lock || true
+          corepack pnpm test:e2e:api
+
+      - name: Build API container
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+
+          docker build \
+            -f apps/api/Dockerfile \
+            -t "unitera-api:${SOURCE_SHA}" \
+            .
+
+      - name: Container build and smoke
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        env:
+          HOSTED_PROXY_HMAC_CURRENT_KEY: synthetic-container-smoke-hmac-key-0001
+        run: |
+          set -euo pipefail
+
+          cleanup_smoke() {
+            docker rm -f unitera-smoke-api unitera-smoke-db >/dev/null 2>&1 || true
+            docker network rm unitera-smoke >/dev/null 2>&1 || true
+          }
+
+          trap cleanup_smoke EXIT
+          cleanup_smoke
+
+          if ss -ltn | grep -qE ':[[:space:]]*3101[[:space:]]'; then
+            echo "::error::Port 3101 is already in use"
+            exit 1
+          fi
+
+          docker network create unitera-smoke
+
+          docker run -d \
+            --name unitera-smoke-db \
+            --network unitera-smoke \
+            -e POSTGRES_DB=unitera \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=synthetic-postgres \
+            postgres:16-alpine
+
+          for attempt in $(seq 1 60); do
+            if docker exec unitera-smoke-db \
+              pg_isready -h unitera-smoke-db -p 5432 \
+              -U postgres -d unitera >/dev/null 2>&1; then
+              break
+            fi
+
+            if [ "$attempt" -eq 60 ]; then
+              docker logs unitera-smoke-db
+              exit 1
+            fi
+
+            sleep 1
+          done
+
+          docker run --rm \
+            --network unitera-smoke \
+            -e NODE_ENV=test \
+            -e DATABASE_URL='postgresql://postgres:synthetic-postgres@unitera-smoke-db:5432/unitera' \
+            -e DATABASE_SSL=false \
+            "unitera-api:${SOURCE_SHA}" \
+            node scripts/migrate.js
+
+          docker exec unitera-smoke-db \
+            psql -U postgres -d unitera -v ON_ERROR_STOP=1 -c \
+            "CREATE ROLE unitera_api_smoke LOGIN PASSWORD 'synthetic-runtime' NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; GRANT app_runtime TO unitera_api_smoke;"
+
+          docker run -d \
+            --name unitera-smoke-api \
+            --network unitera-smoke \
+            -p 3101:3001 \
+            -e NODE_ENV=test \
+            -e PORT=3001 \
+            -e DATABASE_URL='postgresql://unitera_api_smoke:synthetic-runtime@unitera-smoke-db:5432/unitera' \
+            -e DATABASE_SSL_MODE=disable \
+            -e DATABASE_SSL=disable \
+            -e UNITERA_RUNTIME_ROLE=app_runtime \
+            -e JWT_ISSUER_MODE=test \
+            -e JWT_ISSUER=unitera-container-smoke \
+            -e JWT_AUDIENCE=unitera-container-smoke \
+            -e JWT_SECRET=synthetic-container-jwt-secret \
+            -e RATE_LIMIT_STORE=memory \
+            -e HOSTED_AUTH_MODE=hosted-control \
+            -e HOSTED_PUBLIC_HOSTS=pilot.example.invalid \
+            -e HOSTED_PROXY_HMAC_CURRENT_KEY="$HOSTED_PROXY_HMAC_CURRENT_KEY" \
+            "unitera-api:${SOURCE_SHA}"
+
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent \
+              http://127.0.0.1:3101/api/health/ready >/dev/null; then
+              break
+            fi
+
+            if [ "$attempt" -eq 90 ]; then
+              docker logs unitera-smoke-api
+              exit 1
+            fi
+
+            sleep 1
+          done
+
+          CONTAINER_SMOKE_BASE_URL=http://127.0.0.1:3101 \
+          CONTAINER_SMOKE_PUBLIC_HOST=pilot.example.invalid \
+            node scripts/smoke/api-container-smoke.mjs
+
+          docker stop --timeout 15 unitera-smoke-api
+
+          test "$(docker inspect unitera-smoke-api \
+            --format='{{.State.ExitCode}}')" = "0"
+
+          echo "CONTAINER_BUILD_SMOKE_PASS"
+
+      - name: Final relay disposition
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+
+          echo
+          echo "==========================================="
+          echo "UNITERA_CANONICAL_RELAY_PASS"
+          echo "SOURCE_SHA=$SOURCE_SHA"
+          echo "BASE_SHA=$BASE_SHA"
+          echo "==========================================="
