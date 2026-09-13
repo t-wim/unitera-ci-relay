@@ -1,4 +1,4 @@
-name: Unitera Relay Preflight
+name: Unitera QML Native Relay
 
 on:
   workflow_dispatch:
@@ -11,41 +11,23 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: unitera-qml-native-relay-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
 jobs:
-  relay-preflight:
-    name: Exact SHA Relay Preflight
-
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - unitera-ci
-      - relay
-
-    timeout-minutes: 15
+  qml-native:
+    name: Exact SHA Native Presentation Gates
+    runs-on: [self-hosted, Linux, X64, unitera-ci, relay]
+    timeout-minutes: 60
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      QT_VERSION: "6.10.2"
+      CMAKE_BUILD_TYPE: Release
 
     steps:
-      - name: Validate runner
+      - name: Validate runner and source input
         shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "USER=$(whoami)"
-          echo "HOST=$(hostname)"
-          echo "RUNNER_NAME=${RUNNER_NAME:-unknown}"
-          echo "RUNNER_OS=${RUNNER_OS:-unknown}"
-          echo "RUNNER_ARCH=${RUNNER_ARCH:-unknown}"
-          uname -a
-
-          node --version
-          corepack pnpm --version
-          docker version
-          docker run --rm hello-world
-
-      - name: Validate exact source SHA
-        shell: bash
-        env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
 
@@ -54,92 +36,155 @@ jobs:
             exit 2
           fi
 
-          echo "SOURCE_SHA=$SOURCE_SHA"
+          echo "REQUESTED_SOURCE_SHA=$SOURCE_SHA"
+          echo "HOST=$(hostname)"
+          echo "USER=$(whoami)"
+          echo "RUNNER_NAME=${RUNNER_NAME:-unknown}"
+          echo "RUNNER_OS=${RUNNER_OS:-unknown}"
+          echo "RUNNER_ARCH=${RUNNER_ARCH:-unknown}"
+          uname -a
+          git --version
+          cmake --version
+          ninja --version
+          python3 --version
 
       - name: Fetch exact Unitera source
         shell: bash
-        env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
 
-          SOURCE_DIR="$RUNNER_TEMP/unitera-source"
-
+          SOURCE_DIR="$RUNNER_TEMP/unitera-qml-native-source"
           rm -rf "$SOURCE_DIR"
           mkdir -p "$SOURCE_DIR"
 
           git -C "$SOURCE_DIR" init
           git -C "$SOURCE_DIR" remote add origin \
             git@github-unitera-systems:baum777/Unitera_Systems.git
-
-          git -C "$SOURCE_DIR" fetch \
-            --no-tags \
-            --depth=1 \
-            origin "$SOURCE_SHA"
-
-          git -C "$SOURCE_DIR" checkout \
-            --detach FETCH_HEAD
+          git -C "$SOURCE_DIR" fetch --no-tags --depth=1 origin "$SOURCE_SHA"
+          git -C "$SOURCE_DIR" checkout --detach FETCH_HEAD
 
           ACTUAL_SHA="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
-
-          echo "REQUESTED_SHA=$SOURCE_SHA"
-          echo "ACTUAL_SHA=$ACTUAL_SHA"
-
+          echo "ACTUAL_SOURCE_SHA=$ACTUAL_SHA"
           test "$ACTUAL_SHA" = "$SOURCE_SHA"
+          test -z "$(git -C "$SOURCE_DIR" status --porcelain)"
 
-          if [ -n "$(git -C "$SOURCE_DIR" status --porcelain)" ]; then
-            echo "::error::source checkout is not clean"
-            exit 1
-          fi
+          echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
+          echo "EXACT_SOURCE_SHA_PASS"
 
-          echo "SOURCE_CHECKOUT_CLEAN=YES"
-          echo "EXACT_SHA_BINDING_PASS"
+      - name: Install Qt 6 desktop toolchain
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          install-deps: true
+          archives: qtbase qtdeclarative qttools
 
-      - name: Verify Unitera toolchain against source
+      - name: Install Qt host-tool ICU 73 ABI
         shell: bash
-        env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
+          dir="$RUNNER_TEMP/icu73"
+          mkdir -p "$dir"
+          curl --fail --location --retry 3 --silent --show-error \
+            https://snapshot.debian.org/archive/debian/20230616T215730Z/pool/main/i/icu/libicu73_73.2-1_amd64.deb \
+            -o "$RUNNER_TEMP/libicu73.deb"
+          dpkg-deb -x "$RUNNER_TEMP/libicu73.deb" "$dir"
+          echo "LD_LIBRARY_PATH=$dir/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
-          SOURCE_DIR="$RUNNER_TEMP/unitera-source"
-
-          cd "$SOURCE_DIR"
-
-          echo "SOURCE_SHA=$(git rev-parse HEAD)"
-          echo "NODE=$(node --version)"
-          echo "PNPM=$(corepack pnpm --version)"
-          echo "DOCKER=$(docker version --format '{{.Server.Version}}')"
-
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-
-          echo "UNITERA_RELAY_PREFLIGHT_PASS"
-
-      - name: Validate QML presentation contracts
+      - name: Install Ninja
         shell: bash
-        env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
 
-          SOURCE_DIR="$RUNNER_TEMP/unitera-source"
-          cd "$SOURCE_DIR"
-
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          python3 packages/qml-presentation/scripts/validate_contracts.py
-
-      - name: Validate NativeUI boundaries
+      - name: Install contract-validator dependencies
         shell: bash
-        env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: >-
+          python3 -m pip install --disable-pip-version-check
+          'jsonschema>=4.21,<5' referencing
+
+      - name: Validate presentation projection contracts
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: python3 packages/qml-presentation/scripts/validate_contracts.py
+
+      - name: Validate native presentation source boundary
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: python3 packages/native-ui/scripts/validate_native_ui.py
+
+      - name: Validate desktop live-read boundary
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: python3 apps/desktop/scripts/validate_desktop_live_read.py
+
+      - name: Configure native-ui
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: >-
+          cmake -S packages/native-ui -B build/native-ui -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
+          -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}/lib/cmake"
+
+      - name: Build native-ui
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --build build/native-ui --parallel
+
+      - name: Configure desktop fixture shell
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: >-
+          cmake -S apps/desktop -B build/desktop -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
+          -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}/lib/cmake"
+
+      - name: Build desktop fixture shell
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --build build/desktop --parallel
+
+      - name: Configure mobile shell
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: >-
+          cmake -S apps/mobile -B build/mobile -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
+          -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}/lib/cmake"
+
+      - name: Build mobile shell
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cmake --build build/mobile --parallel
+
+      - name: Mobile shell semantics battery
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: python3 apps/mobile/scripts/validate_mobile_shell.py
+
+      - name: Lint shared QML
+        working-directory: ${{ env.SOURCE_DIR }}
+        shell: bash
         run: |
           set -euo pipefail
+          qmllint -I build/native-ui \
+            packages/native-ui/qml/RealmHeader.qml \
+            packages/native-ui/qml/WorkCardView.qml \
+            packages/native-ui/qml/QuickActionRow.qml \
+            packages/native-ui/qml/TrustFooter.qml \
+            packages/native-ui/qml/IntentLogPanel.qml \
+            packages/native-ui/qml/AttentionBanner.qml \
+            packages/native-ui/qml/OutcomeStateView.qml
 
-          SOURCE_DIR="$RUNNER_TEMP/unitera-source"
-          cd "$SOURCE_DIR"
+      - name: Lint surface QML
+        working-directory: ${{ env.SOURCE_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          qmllint \
+            -I build/native-ui \
+            -I build/native-ui-build \
+            -I build/desktop \
+            -I build/mobile \
+            apps/desktop/Main.qml apps/desktop/LiveReadPanel.qml apps/mobile/Main.qml
 
+      - name: Final exact-source disposition
+        working-directory: ${{ env.SOURCE_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          python3 packages/native-ui/scripts/validate_native_ui.py
-
           test -z "$(git status --porcelain)"
-          echo "UNITERA_QML_RELAY_PASS"
+          echo "UNITERA_QML_NATIVE_RELAY_PASS"
