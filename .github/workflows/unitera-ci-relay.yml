@@ -54,6 +54,26 @@ jobs:
           echo "SOURCE_SHA=$SOURCE_SHA"
           echo "BASE_SHA=$BASE_SHA"
 
+      - name: Post pending status
+        shell: bash
+        env:
+          UNITERA_STATUS_TOKEN: ${{ secrets.UNITERA_STATUS_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          BODY=$(printf '{"state":"pending","context":"Unitera Relay / Canonical CI","description":"relay run %s · %s in progress","target_url":"%s"}' \
+            "${GITHUB_RUN_ID}" "${SOURCE_SHA:0:8}" "$RUN_URL")
+
+          curl --fail --silent --show-error --request POST \
+            --url "https://api.github.com/repos/baum777/Unitera_Systems/statuses/${SOURCE_SHA}" \
+            --header "Authorization: Bearer ${UNITERA_STATUS_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data "$BODY" > /dev/null
+
+          echo "PENDING_STATUS_POSTED sha=${SOURCE_SHA}"
+
       - name: Prepare exact Unitera source
         shell: bash
         run: |
@@ -106,6 +126,19 @@ jobs:
         run: |
           set -euo pipefail
           corepack pnpm build:packages
+
+      - name: Mimosa verdict gate
+        shell: bash
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          set -euo pipefail
+
+          corepack pnpm security:mimosa:scan
+
+          EFFECTIVE="$(ls -1t security/mimosa-evidence/*-scan-effective.json | head -1)"
+          echo "Mimosa effective verdict evidence (${EFFECTIVE}):"
+          cat "$EFFECTIVE"
+          echo "UNITERA_RELAY_MIMOSA_PASS"
 
       - name: Lint
         shell: bash
@@ -367,3 +400,30 @@ jobs:
           echo "SOURCE_SHA=$SOURCE_SHA"
           echo "BASE_SHA=$BASE_SHA"
           echo "==========================================="
+
+      - name: Publish relay result
+        if: always()
+        shell: bash
+        env:
+          UNITERA_STATUS_TOKEN: ${{ secrets.UNITERA_STATUS_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          case "${{ job.status }}" in
+            success) STATE="success" ;;
+            failure) STATE="failure" ;;
+            *)       STATE="error" ;;
+          esac
+
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          BODY=$(printf '{"state":"%s","context":"Unitera Relay / Canonical CI","description":"relay run %s · %s","target_url":"%s"}' \
+            "$STATE" "${GITHUB_RUN_ID}" "${SOURCE_SHA:0:8}" "$RUN_URL")
+
+          curl --fail --silent --show-error --request POST \
+            --url "https://api.github.com/repos/baum777/Unitera_Systems/statuses/${SOURCE_SHA}" \
+            --header "Authorization: Bearer ${UNITERA_STATUS_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data "$BODY" > /dev/null
+
+          echo "RELAY_RESULT_BOUND repo=baum777/Unitera_Systems sha=${SOURCE_SHA} state=${STATE}"
