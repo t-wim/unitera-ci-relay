@@ -37,10 +37,6 @@ jobs:
       BASE_SHA: ${{ inputs.base_sha }}
       NODE_VERSION: "24"
       PNPM_VERSION: "10.5.2"
-      # Keep testcontainers' node lock out of the shared /tmp: a lock file
-      # created there by any other user (host session or another lane)
-      # makes the runner's createEmptyTmpFile fail with EACCES.
-      TMPDIR: ${{ runner.temp }}
 
     steps:
       - name: Validate inputs
@@ -206,6 +202,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Keep testcontainers' node lock out of the shared /tmp (EACCES when
+          # another local user owns a stale lock there).
+          export TMPDIR="$RUNNER_TEMP"
           rm -f /tmp/testcontainers-node.lock || true
           corepack pnpm test:api:integration:hosted-auth-runtime
 
@@ -215,6 +214,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Keep testcontainers' node lock out of the shared /tmp (EACCES when
+          # another local user owns a stale lock there).
+          export TMPDIR="$RUNNER_TEMP"
           rm -f /tmp/testcontainers-node.lock || true
           corepack pnpm test:api:integration:hosted-auth-migration-upgrade
 
@@ -263,6 +265,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Keep testcontainers' node lock out of the shared /tmp (EACCES when
+          # another local user owns a stale lock there).
+          export TMPDIR="$RUNNER_TEMP"
           rm -f /tmp/testcontainers-node.lock || true
           corepack pnpm test:e2e:api
 
