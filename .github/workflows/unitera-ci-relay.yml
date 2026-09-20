@@ -255,6 +255,11 @@ jobs:
             sleep 1
           done
 
+          # Keep testcontainers' node lock out of the shared /tmp (EACCES when
+          # another local user owns the stale lock file).
+          export TMPDIR="$RUNNER_TEMP"
+          rm -f /tmp/testcontainers-node.lock || true
+
           DATABASE_URL='postgresql://postgres:postgres@localhost:55432/unitera_test' \
           UNITERA_TESTCONTAINERS=1 \
             corepack pnpm test:review
