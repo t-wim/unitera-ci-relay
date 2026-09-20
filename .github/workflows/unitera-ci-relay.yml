@@ -82,6 +82,30 @@ jobs:
           echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
           echo "EXACT_SHA_BINDING_PASS"
 
+      - name: Materialize frozen generic runtime (CLG P12 pin)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Pinned by the Unitera runs repo gitlink (da597ad, pin commit
+          # ad1aac5 "chore(runtime): pin CLG P12 generic core freeze
+          # baseline"). apps/api acceptance-harness specs locate this
+          # runtime by walking up from the spec location; a standalone
+          # export has no ancestor checkout, so the pin is materialized
+          # INSIDE the source dir where that walk finds it deterministically.
+          RUNTIME_PIN="da597ad684fbee18ec27658e6a0d90c677ddf1d3"
+          RUNTIME_DIR="$SOURCE_DIR/agentic_workflow/model-agnostic-workflow-system"
+
+          git init "$RUNTIME_DIR"
+          git -C "$RUNTIME_DIR" remote add origin https://github.com/baum777/model-agnostic-workflow-system.git
+          git -C "$RUNTIME_DIR" fetch --no-tags origin "$RUNTIME_PIN"
+          git -C "$RUNTIME_DIR" checkout --detach "$RUNTIME_PIN"
+
+          test "$(git -C "$RUNTIME_DIR" rev-parse HEAD)" = "$RUNTIME_PIN"
+          test -f "$RUNTIME_DIR/runtime/kernel/loop-controller.mjs"
+          echo "agentic_workflow/" >> "$SOURCE_DIR/.git/info/exclude"
+          echo "FROZEN_RUNTIME_PIN_PASS ($RUNTIME_PIN)"
+
       - name: Verify toolchain
         shell: bash
         run: |
