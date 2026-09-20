@@ -98,7 +98,7 @@ jobs:
 
           git init "$RUNTIME_DIR"
           git -C "$RUNTIME_DIR" remote add origin https://github.com/baum777/model-agnostic-workflow-system.git
-          git -C "$RUNTIME_DIR" fetch --no-tags origin "$RUNTIME_PIN"
+          git -C "$RUNTIME_DIR" fetch --no-tags origin "+refs/heads/frozen/clg-p12:refs/heads/frozen-clg-p12"
           git -C "$RUNTIME_DIR" checkout --detach "$RUNTIME_PIN"
 
           test "$(git -C "$RUNTIME_DIR" rev-parse HEAD)" = "$RUNTIME_PIN"
