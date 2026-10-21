@@ -1,0 +1,31 @@
+# Invented fixture. No application contracts, identities or real commands.
+name: Synthetic inventory example
+on:
+  workflow_dispatch:
+env:
+  FIXTURE_MODE: synthetic
+jobs:
+  sample:
+    runs-on: synthetic-runner
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: alpha
+            command: printf fixture-alpha
+          - name: beta
+            command: printf fixture-beta
+    env:
+      FIXTURE_NAME: ${{ matrix.name }}
+    steps:
+      - name: Example command retained as data
+        run: ${{ matrix.command }}
+  summary:
+    needs: [sample]
+    if: always()
+    continue-on-error: true
+    steps:
+      - name: Non-executable artifact placeholder
+        uses: example.invalid/placeholder-upload@synthetic
+        with:
+          path: invented-report.txt
