@@ -1,0 +1,37 @@
+{
+  "source_repository": "baum777/Unitera_Systems",
+  "source_baseline": "3fc6a0914a341138ee547599d2044e2f6f0992be",
+  "source_workflow_sha256": {
+    ".github/workflows/ci.yml": "57cddd146c3fb343c3e6b0bc0372a3de3e5a6b0237607b77bce6efbdba53e2fb",
+    ".github/workflows/governance-guardrails.yml": "4fd380fa7fb5ccc9dd7515b9d983f58c422a0e972c1e46f772ed20a25d0323cf"
+  },
+  "matrix_commands": [
+    "pnpm test:domain",
+    "pnpm exec vitest run packages/policy",
+    "pnpm test:llm",
+    "UNITERA_TESTCONTAINERS=1 pnpm test:review",
+    "pnpm test:api:unit-baseline",
+    "pnpm test:api:integration:core-commitment",
+    "pnpm test:api:integration:rls-runtime",
+    "pnpm test:api:integration:audit-strict",
+    "pnpm test:api:integration:execution-dispatch-migration",
+    "pnpm test:api:integration:rate-limit-store",
+    "pnpm test:api:integration:tenant-genesis-materialization",
+    "pnpm test:api:integration:tenant-genesis-ledger-privileges",
+    "UNITERA_TESTCONTAINERS=1 pnpm test:company-brain",
+    "pnpm test:web",
+    "pnpm build:web",
+    "pnpm db:migrate",
+    "pnpm db:migrate && pnpm db:drift-check"
+  ],
+  "status": "CANDIDATE_NOT_LIVE_QUALIFIED",
+  "gate_parity": "COMMAND_SCOPE_MAPPED_NOT_FULL_PLATFORM_PARITY",
+  "remaining": [
+    "credential isolation independent proof",
+    "source status writeback",
+    "live negative pin test",
+    "full exact-source run",
+    "fresh independent reviews",
+    "source CI artifact-upload parity and producer integration"
+  ]
+}

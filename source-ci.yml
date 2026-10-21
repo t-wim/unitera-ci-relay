@@ -1,0 +1,467 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '24.x'
+  PNPM_VERSION: '10.5.2'
+
+jobs:
+  lint-and-build:
+    name: Lint & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm build:packages
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build API
+        run: pnpm --filter @unitera/api build
+
+      - name: Type check Web
+        run: pnpm --filter @unitera/web exec tsc --noEmit
+
+  security-gates:
+    name: Security Gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Wave-0 REF-009: secret:scan must run in CI
+      - name: Secret scan
+        run: pnpm secret:scan
+
+      - name: Verify Vorgänge log is append-only
+        env:
+          VORGAENGE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: pnpm codex:check:vorgaenge
+
+      # Wave-0 REF-005: Vendor hash verification — proves committed tarballs
+      # match committed checksums. Authority commit in manifest is metadata
+      # for traceability; live verification requires the authority repo checkout.
+      - name: Verify vendor integrity
+        run: |
+          cd vendor/unitera-os/0.1.0
+          sha256sum -c artifacts.sha256
+
+      # R4-T04: consumed vendor chain — every artifact bound via file:
+      # dependencies/overrides must match the authority digest committed
+      # beside it (GAP-AUTH-001 acceptance: CI fails when a consumed vendor
+      # tgz hash != released authority digest). The step above stays as the
+      # owner-chosen Wave-0 REF-005 legacy-pin invariant.
+      - name: Verify consumed vendor integrity
+        run: bash scripts/ci/check-vendor-integrity.sh
+
+      # MIMOSA-VERDICT-GATE-01: Mimosa stays the detector; this gate adds the
+      # fail-closed Unitera verdict layer (finding ≠ vulnerability; acceptance
+      # ≠ permanent bypass). Detector runs from the hash-verified vendored
+      # payload; exit code is the effective verdict.
+      - name: Verify Mimosa detector vendor integrity
+        run: |
+          cd vendor/mimosa/1.0.3
+          sha256sum -c artifacts.sha256
+
+      - name: Mimosa verdict gate
+        run: pnpm security:mimosa:scan
+
+      - name: Mimosa verdict resolver unit tests
+        run: corepack pnpm vitest run tools/security
+
+  test:
+    name: Unit Tests + Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm build:packages
+
+      - name: Run tests with coverage
+        run: pnpm --filter @unitera/api exec vitest run --coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ github.sha }}
+          path: apps/api/coverage/
+          retention-days: 14
+
+  # Wave-0 REF-008: PostgreSQL integration tests — must not be skipped silently
+  test-postgres:
+    name: PostgreSQL Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: unitera_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm build:packages
+
+      - name: Run PostgreSQL integration tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/unitera_test
+          UNITERA_TESTCONTAINERS: '1'
+        run: pnpm test:review
+
+  e2e:
+    name: E2E Smoke (Stufe 0, allow-failure)
+    runs-on: ubuntu-latest
+    # Allow-failure phase per docs/governance/decision-brief-e2e-tier.md (Stufe 4).
+    # Promote to a required check only after the tier is green-stable.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm build:packages
+
+      - name: Install Playwright chromium (with OS deps)
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run E2E smoke
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-${{ github.sha }}
+          path: e2e/playwright-report/
+          retention-days: 14
+
+  e2e-api:
+    name: E2E API Auth Runtime
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm build:packages
+
+      - name: Build API
+        run: pnpm --filter @unitera/api build
+
+      - name: Run API auth-runtime E2E
+        run: pnpm test:e2e:api
+
+      - name: Upload Playwright API report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-api-${{ github.sha }}
+          path: e2e/playwright-report-api/
+          retention-days: 14
+
+  proxy-security:
+    name: Proxy Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Build workspace packages
+        run: pnpm build:packages
+      - name: Run API and web proxy security contracts
+        run: >-
+          pnpm exec vitest run
+          apps/api/src/security/hosted-proxy-auth.spec.ts
+          apps/api/src/security/hosted-proxy-nonce.store.spec.ts
+          apps/api/src/security/hosted-public-host.spec.ts
+          apps/web/lib/hosted-auth-config.spec.ts
+          apps/web/lib/hosted-auth-proxy.spec.ts
+
+  hosted-web-routing:
+    name: Hosted Web Routing and BFF
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:packages
+      - name: Verify product-host, hosted principal and BFF boundaries
+        run: >-
+          pnpm --filter @unitera/web exec vitest run
+          lib/middleware.routing.spec.ts
+          lib/hosted-auth-routing.spec.ts
+          lib/hosted-session-server.spec.ts
+          lib/auth/api-client.spec.ts
+          lib/product-runtime-context.spec.ts
+
+  hosted-auth-runtime:
+    name: Hosted Auth Runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:packages
+      - run: docker version
+      - run: pnpm test:api:integration:hosted-auth-runtime
+
+  hosted-auth-migration-upgrade:
+    name: Hosted Auth Migration Upgrade
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:packages
+      - run: docker version
+      - run: pnpm test:api:integration:hosted-auth-migration-upgrade
+
+  container-build-smoke:
+    name: Container Build and Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Build API image
+        run: docker build -f apps/api/Dockerfile -t unitera-api:${{ github.sha }} .
+      - name: Run bounded PostgreSQL 16 and API container smoke
+        env:
+          HOSTED_PROXY_HMAC_CURRENT_KEY: synthetic-container-smoke-hmac-key-0001
+        run: |
+          set -euo pipefail
+
+          cleanup_smoke() {
+            docker rm -f unitera-smoke-api unitera-smoke-db >/dev/null 2>&1 || true
+            docker network rm unitera-smoke >/dev/null 2>&1 || true
+          }
+
+          trap cleanup_smoke EXIT
+          cleanup_smoke
+
+          if ss -ltn | grep -qE ':[[:space:]]*3101[[:space:]]'; then
+            echo "Port 3101 is already in use" >&2
+            exit 1
+          fi
+
+          docker network create unitera-smoke
+          docker run -d --name unitera-smoke-db --network unitera-smoke \
+            -e POSTGRES_DB=unitera \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=synthetic-postgres \
+            postgres:16-alpine
+
+          for attempt in $(seq 1 60); do
+            if docker exec unitera-smoke-db \
+              pg_isready -h unitera-smoke-db -p 5432 -U postgres -d unitera >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              docker logs unitera-smoke-db
+              exit 1
+            fi
+            sleep 1
+          done
+
+          docker run --rm --network unitera-smoke \
+            -e NODE_ENV=test \
+            -e DATABASE_URL=postgresql://postgres:synthetic-postgres@unitera-smoke-db:5432/unitera \
+            -e DATABASE_SSL=false \
+            unitera-api:${{ github.sha }} node scripts/migrate.js
+          docker exec unitera-smoke-db psql -U postgres -d unitera -v ON_ERROR_STOP=1 -c \
+            "CREATE ROLE unitera_api_smoke LOGIN PASSWORD 'synthetic-runtime' NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; GRANT app_runtime TO unitera_api_smoke;"
+
+          docker run -d --name unitera-smoke-api --network unitera-smoke \
+            -p 3101:3001 \
+            -e NODE_ENV=test \
+            -e PORT=3001 \
+            -e DATABASE_URL=postgresql://unitera_api_smoke:synthetic-runtime@unitera-smoke-db:5432/unitera \
+            -e DATABASE_SSL_MODE=disable \
+            -e DATABASE_SSL=disable \
+            -e UNITERA_RUNTIME_ROLE=app_runtime \
+            -e JWT_ISSUER_MODE=test \
+            -e JWT_ISSUER=unitera-container-smoke \
+            -e JWT_AUDIENCE=unitera-container-smoke \
+            -e JWT_SECRET=synthetic-container-jwt-secret \
+            -e RATE_LIMIT_STORE=memory \
+            -e HOSTED_AUTH_MODE=hosted-control \
+            -e HOSTED_PUBLIC_HOSTS=pilot.example.invalid \
+            -e HOSTED_PROXY_HMAC_CURRENT_KEY="$HOSTED_PROXY_HMAC_CURRENT_KEY" \
+            unitera-api:${{ github.sha }}
+
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent \
+              http://127.0.0.1:3101/api/health/ready >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 90 ]; then
+              docker logs unitera-smoke-api
+              exit 1
+            fi
+            sleep 1
+          done
+
+          CONTAINER_SMOKE_BASE_URL=http://127.0.0.1:3101 \
+          CONTAINER_SMOKE_PUBLIC_HOST=pilot.example.invalid \
+            node scripts/smoke/api-container-smoke.mjs
+
+          docker stop --time 15 unitera-smoke-api
+          test "$(docker inspect unitera-smoke-api --format='{{.State.ExitCode}}')" = "0"
+
+  hosted-pilot-required:
+    name: Hosted Pilot Required Gates
+    if: ${{ always() }}
+    needs:
+      - security-gates
+      - e2e-api
+      - proxy-security
+      - hosted-web-routing
+      - hosted-auth-runtime
+      - hosted-auth-migration-upgrade
+      - container-build-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every hosted pilot gate
+        env:
+          SECURITY_GATES: ${{ needs.security-gates.result }}
+          E2E_API: ${{ needs.e2e-api.result }}
+          PROXY_SECURITY: ${{ needs.proxy-security.result }}
+          HOSTED_WEB_ROUTING: ${{ needs.hosted-web-routing.result }}
+          HOSTED_RUNTIME: ${{ needs.hosted-auth-runtime.result }}
+          MIGRATION_UPGRADE: ${{ needs.hosted-auth-migration-upgrade.result }}
+          CONTAINER_SMOKE: ${{ needs.container-build-smoke.result }}
+        run: |
+          for result in "$SECURITY_GATES" "$E2E_API" "$PROXY_SECURITY" "$HOSTED_WEB_ROUTING" "$HOSTED_RUNTIME" "$MIGRATION_UPGRADE" "$CONTAINER_SMOKE"; do
+            if [ "$result" != "success" ]; then
+              echo "::error::A required hosted pilot gate did not succeed"
+              exit 1
+            fi
+          done
