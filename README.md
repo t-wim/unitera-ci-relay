@@ -1,54 +1,51 @@
-# Unitera CI relay
+# Relay quarantine publication candidate
 
-The repair candidate binds execution to `expected_relay_sha` before source
-checkout or credential use. Source PR identity/reviews are checked in a separate
-job without executing candidate code. Canonical jobs consume no source API token.
+This candidate contains original containment logic, invented test fixtures and sanitized
+operating documentation. It is ready for a separate publication review only after the
+local review packet has been checked. It does not authorize a push, dispatch or merge.
 
-## Candidate state
+Both dispatch entrypoints validate the relay/source/base input formats and relay SHA,
+then fail unconditionally before source, credential or Docker operations. They remain
+manual-only. The legacy runner must stay stopped and both workflows must stay disabled.
 
-`CANDIDATE_NOT_LIVE_QUALIFIED`. This change is not pilot activation, merge
-authorization, platform branch protection, or completed CI parity.
+`MERGE_CONTROL = PROCESS_ENFORCED`. Platform enforcement is not claimed.
+Isolation, real CI parity, source CI, writeback and merge eligibility remain unqualified.
 
-Required inputs: `source_sha`, `base_sha`, `expected_relay_sha`, `source_pr`.
-Source workflow SHA-256 pins prevent unreviewed source CI changes from inheriting
-this mapping. The added commands cover consumed-vendor integrity, Mimosa,
-hosted Web/BFF, governance validation, all 17 governance matrix commands, and
-the RLS gate. Execution is serial and fail-closed; aggregate CI job dependencies
-are represented by sequential successful steps. Artifact uploads and the source
-trusted-evidence producer are not replicated by this candidate.
+## Files and disclosure
 
-`UNITERA_SOURCE_READ_TOKEN` is a proposed read-only credential for source PR and
-review reads, referenced only in the trusted review job. It is NOT created,
-installed or verified by this patch. The workflow refuses credential use unless
-`UNITERA_RELAY_CREDENTIAL_ISOLATION_QUALIFIED` is explicitly `true`.
-That variable is an admission switch, never proof: independent host/SSH/Docker/
-credential-isolation assessment must precede setting it. The persistent runner
-and Docker socket can expose host credentials to untrusted source code; separate
-jobs alone do not establish isolation. Do not dispatch this candidate before
-that qualification. No existing secret is read by this implementation run.
+`publication-policy.json` contains the exact allowed file inventory and only the necessary
+real destination, branch and already-published relay base reference. No real source-repository
+identity, source commit, source workflow digest, source command inventory, host inventory or
+private source snapshot is embedded. Fixture content and its digests are entirely synthetic.
+Standard Git author/committer and signing provenance require review as commit metadata.
 
-## Validation
+The inherited application fixtures and mapping are removed from the resulting tree. Existing
+destination ancestors are not rewritten. No rejected local commit is an ancestor of the new
+candidate. The prior local repository and its private backup are outside this publication path.
 
-`python3 test_candidate.py` verifies the pin dependency, wrong-pin rejection,
-17-command inventory, source-workflow hash bindings, mandatory security steps,
-shell syntax, self-hosted labels and separation of source code from API tokens.
-These are local structural and shell-contract tests, not a live runner proof.
+## Checks
 
-The two `source-*.yml` files are exact, dated test fixtures from
-`baum777/Unitera_Systems@3fc6a0914a341138ee547599d2044e2f6f0992be`;
-they do not execute as GitHub workflows. `gate-mapping.json` records their pins.
+Prerequisites: Python 3, PyYAML, Git and Bash already available locally. No source install,
+network access or source command execution is required for these checks.
 
-## Remaining closure gates
+```sh
+python3 test_candidate.py
+python3 inventory.py
+git diff --check
+```
 
-1. Independent review of this exact relay head and source PR head.
-2. Independently verified credential/host isolation and bounded read-token custody.
-3. Live wrong-relay-SHA negative test, then exact-source full run.
-4. Honest exact-source pending/final status writeback from a separate trusted
-   reporter; no write token may be exposed to source code.
-5. Artifact/producer integration and complete parity review; fresh source refs.
-6. Owner-controlled process-mode merge with preserved deployment dispositions.
+The inventory example validates invented file hashes and preserves matrix, condition and
+step data. It does not model an application's real gates. Expressions remain inert data.
+Tests also construct temporary synthetic Git histories to verify that private content in an
+intermediate commit is detected even when removed from the final tree.
 
-No automatic PR triggering, status writeback, relay merge, source merge,
-secret creation, runner registration, billing or source workflows changed.
-Rollback: abandon the repair branch; after separately authorized adoption,
-revert the repair commit. Never fall back silently to a paid runner.
+`audit_publication.py` reads every proposed commit tree, new Git object, added diff line and
+commit identity against a strict file allowlist, credential patterns and an external private
+corpus/deny-list. Its report contains paths, digests and rule names, never matched contents.
+Private corpora, deny-lists and real review evidence must stay outside this repository.
+Pattern/corpus checks have limits and cannot prove the absence of all unknown private data.
+
+See [repair state](docs/REPAIR_STATE.md) and [operation log](docs/VORGAENGE_LOG.md).
+Rollback: abandon this unmerged candidate while retaining the disabled execution lane.
+Never re-enable the old workflows as a fallback. No VM, credential, provider or source
+repository changes are part of this sanitation slice.

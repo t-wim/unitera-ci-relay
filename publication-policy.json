@@ -1,0 +1,38 @@
+{
+  "schema": "relay.publication-policy.v1",
+  "target_repository": "t-wim/unitera-ci-relay",
+  "base_sha": "7fa8e05c6984077b878aaf666937ee0a00448d06",
+  "candidate_branch": "codex/relay-publication-clean-20261021",
+  "allowed_files": [
+    ".github/workflows/unitera-ci-relay.yml",
+    ".github/workflows/unitera-relay-preflight.yml",
+    ".gitignore",
+    "README.md",
+    "audit_publication.py",
+    "docs/REPAIR_STATE.md",
+    "docs/VORGAENGE_LOG.md",
+    "fixtures/manifest.json",
+    "fixtures/synthetic-workflow.yml",
+    "inventory.py",
+    "publication-policy.json",
+    "test_candidate.py"
+  ],
+  "reference_disclosure": {
+    "target_repository": "Necessary destination, already known to its owner",
+    "base_sha": "Already present in the destination repository; necessary ancestry binding",
+    "candidate_branch": "Locally chosen repair branch; necessary review destination",
+    "source_references_embedded": false,
+    "source_workflow_digests_embedded": false,
+    "synthetic_fixture_digests_only": true
+  },
+  "merge_control": "PROCESS_ENFORCED",
+  "qualification": {
+    "ISOLATION_QUALIFIED": "NOT_QUALIFIED",
+    "CI_PARITY_QUALIFIED": "NOT_QUALIFIED",
+    "EXACT_SOURCE_CI_PASS": "NOT_RUN",
+    "STATUS_WRITEBACK_VERIFIED": "NOT_VERIFIED",
+    "MERGE_ELIGIBLE": false,
+    "MERGED": false
+  },
+  "publication_authorized": false
+}

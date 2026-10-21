@@ -1,114 +1,58 @@
 name: Unitera Relay Preflight
-
 on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: "Exact 40-character Unitera_Systems commit SHA"
+        description: Exact source commit
         required: true
         type: string
-
-permissions:
-  contents: read
-
+      base_sha:
+        description: Exact source base commit
+        required: true
+        type: string
+      expected_relay_sha:
+        description: Exact reviewed relay commit
+        required: true
+        type: string
+      source_pr:
+        description: Source pull request number
+        required: true
+        type: string
+permissions: {}
+concurrency:
+  group: relay-quarantine
+  cancel-in-progress: false
 jobs:
-  relay-preflight:
-    name: Exact SHA Relay Preflight
-
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - unitera-ci
-      - relay
-
-    timeout-minutes: 15
-
+  execution-pin:
+    runs-on: [self-hosted, Linux, X64, unitera-ci, relay]
+    timeout-minutes: 5
+    permissions: {}
     steps:
-      - name: Validate runner
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "USER=$(whoami)"
-          echo "HOST=$(hostname)"
-          echo "RUNNER_NAME=${RUNNER_NAME:-unknown}"
-          echo "RUNNER_OS=${RUNNER_OS:-unknown}"
-          echo "RUNNER_ARCH=${RUNNER_ARCH:-unknown}"
-
-          node --version
-          corepack pnpm --version
-          docker version
-
-      - name: Validate exact source SHA
+      - name: Check execution inputs before any other operation
         shell: bash
         env:
+          EXPECTED_RELAY_SHA: ${{ inputs.expected_relay_sha }}
+          ACTUAL_RELAY_SHA: ${{ github.sha }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          SOURCE_PR: ${{ inputs.source_pr }}
         run: |
           set -euo pipefail
-
-          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::source_sha must be exactly 40 lowercase hex characters"
-            exit 2
-          fi
-
-          echo "SOURCE_SHA=$SOURCE_SHA"
-
-      - name: Fetch exact Unitera source
+          for value in "$EXPECTED_RELAY_SHA" "$SOURCE_SHA" "$BASE_SHA"; do
+            [[ "$value" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          done
+          [[ "$SOURCE_PR" =~ ^[1-9][0-9]*$ ]] || exit 2
+          test "$ACTUAL_RELAY_SHA" = "$EXPECTED_RELAY_SHA"
+          echo RELAY_EXECUTION_PIN_PASS
+  isolation-blocked:
+    needs: [execution-pin]
+    runs-on: [self-hosted, Linux, X64, unitera-ci, relay]
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Refuse admission until disposable VM qualification
         shell: bash
-        env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
-
-          SOURCE_DIR="$RUNNER_TEMP/unitera-source"
-
-          rm -rf "$SOURCE_DIR"
-          mkdir -p "$SOURCE_DIR"
-
-          git -C "$SOURCE_DIR" init
-          git -C "$SOURCE_DIR" remote add origin \
-            git@github-unitera-systems:baum777/Unitera_Systems.git
-
-          git -C "$SOURCE_DIR" fetch \
-            --no-tags \
-            --depth=1 \
-            origin "$SOURCE_SHA"
-
-          git -C "$SOURCE_DIR" checkout \
-            --detach FETCH_HEAD
-
-          ACTUAL_SHA="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
-
-          echo "REQUESTED_SHA=$SOURCE_SHA"
-          echo "ACTUAL_SHA=$ACTUAL_SHA"
-
-          test "$ACTUAL_SHA" = "$SOURCE_SHA"
-
-          if [ -n "$(git -C "$SOURCE_DIR" status --porcelain)" ]; then
-            echo "::error::source checkout is not clean"
-            exit 1
-          fi
-
-          echo "SOURCE_CHECKOUT_CLEAN=YES"
-          echo "EXACT_SHA_BINDING_PASS"
-
-      - name: Verify Unitera toolchain against source
-        shell: bash
-        env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
-        run: |
-          set -euo pipefail
-
-          SOURCE_DIR="$RUNNER_TEMP/unitera-source"
-
-          cd "$SOURCE_DIR"
-
-          echo "SOURCE_SHA=$(git rev-parse HEAD)"
-          echo "NODE=$(node --version)"
-          echo "PNPM=$(corepack pnpm --version)"
-          echo "DOCKER=$(docker version --format '{{.Server.Version}}')"
-
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-
-          echo "UNITERA_RELAY_PREFLIGHT_PASS"
+          echo "::error::RELAY_QUARANTINED: disposable VM lane is not qualified"
+          exit 1

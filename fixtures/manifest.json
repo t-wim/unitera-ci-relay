@@ -1,0 +1,10 @@
+{
+  "fixture_class": "SYNTHETIC_ONLY",
+  "files": [
+    {
+      "path": "synthetic-workflow.yml",
+      "sha256": "a778d02630379a2ce19aef836dcce19c97f7c7dc5ab53b9eb701a869e6c5652c",
+      "git_blob_sha": "2e34af708f3ead90566596c6d69248a10f331a95"
+    }
+  ]
+}
