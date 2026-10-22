@@ -1,42 +1,27 @@
-# Scope: publication sanitation only
+# Scope: disposable offline VM preparation and synthetic qualification
 
-Decision: make a bounded quarantine candidate independently reviewable without exporting
-private source snapshots, source-derived command inventories or host/credential evidence.
-Owner: the relay repository identified by publication-policy.json. No shared-core, source,
-Registry or personal credential change is included.
+Owner: relay repository; base and allowed files are in publication-policy.json. Changes are
+limited to free local VM lifecycle code, synthetic probes/tests and sanitized operating docs.
+The existing quarantined workflows are unchanged. Shared core, Source, Registry, credentials,
+runner registration, status reporting, merge and production state are not modified.
 
-Implementation: a fresh clone starts from the destination's current main commit. The old
-local repository remains preserved separately. The new publication branch does not descend
-from that rejected local candidate and carries no private backup refs, alternate object store,
-archive or copied evidence. Existing remote history is retained; final-tree inherited source
-fixtures are removed. Rewriting already-published remote history is outside this task.
+Decision: a fresh verified RAM-only VM per synthetic job, Docker only in the VM, no personal
+mounts/agents/credentials and no host/LAN/metadata network path. A dedicated rootless QEMU
+process is confined by user/network/PID namespaces, a minimal host filesystem view, QEMU
+seccomp and hard user-scope resource limits. The virtual NIC remains live; host services are
+positively tested on the host and denied in the guest. This is more than a NAT assumption.
 
-Contract: all proposed commit trees must match the strict file allowlist; tests use only
-invented fixtures. Real bindings here are limited to the destination repository, local branch
-name and the base already present at that destination. Source bindings remain execution-time
-inputs rather than embedded private information. Synthetic fixture digests disclose no real
-source binding. The separate local review packet records exact head, complete file inventory,
-new commit/object inventory, full diff digest and validation results.
+Contract: vm/guest-init.sh and the reviewed image/controller digest must match private live
+evidence for success, deliberate failure, timeout, SIGTERM cancellation and a fresh successor.
+All twenty named guest checks, real cgroup limits, preserved input hashes and absence of
+process/scope/job-directory leftovers are mandatory. Failed or incomplete ledgers deny
+VM_ISOLATION_QUALIFIED. Every source-derived or image/host-specific artifact remains private.
 
-Gate: run test_candidate.py; inspect every new commit/tree/object and full diff; scan the
-resulting tree and added content against known private corpus, private-reference deny-list
-and credential patterns. A clean scan is not automatic approval or an exhaustive privacy proof.
-No push is performed by these tools. Publication review and authorization remain separate.
+This offline synthetic VM profile is not an admitted runner or general-purpose online lane.
+Network access is denied entirely, including external dependencies. Full real CI resource
+needs and gate parity are not measured here. Future source/dependency ingestion and online
+egress require their own bounded review and negative tests.
 
-Lifecycle state:
-
-- ISOLATION_QUALIFIED: NOT_QUALIFIED
-- CI_PARITY_QUALIFIED: NOT_QUALIFIED
-- EXACT_SOURCE_CI_PASS: NOT_RUN
-- STATUS_WRITEBACK_VERIFIED: NOT_VERIFIED
-- MERGE_ELIGIBLE: false
-- MERGED: false
-
-No VM was created or qualified. Full CI execution mapping, credential custody, trusted
-producer integration, independent live qualification and merge/deployment gates remain open.
-The existing runner/workflow shutdown posture is preserved. No source status, merge or
-production/pilot activation follows from this sanitation.
-
-Next gate: review the exact local publication packet for this head and destination.
-Do not push before that review succeeds. Preserve the previous candidate locally even if
-this branch is abandoned. A later code change requires renewed tests and publication review.
+CI_PARITY, SOURCE_CI and WRITEBACK remain open; no source merge eligibility or activation is
+created. Next gate for this slice is exact-head code/evidence and publication review. No
+push, merge, tokens or qualification variables are authorized by this preparation task.

@@ -1,8 +1,8 @@
 {
   "schema": "relay.publication-policy.v1",
   "target_repository": "t-wim/unitera-ci-relay",
-  "base_sha": "7fa8e05c6984077b878aaf666937ee0a00448d06",
-  "candidate_branch": "codex/relay-publication-clean-20261021",
+  "base_sha": "75f0b6aeb0ff376c23b8d00779b7da323cd0fad5",
+  "candidate_branch": "codex/disposable-vm-synthetic-20261022",
   "allowed_files": [
     ".github/workflows/unitera-ci-relay.yml",
     ".github/workflows/unitera-relay-preflight.yml",
@@ -10,12 +10,22 @@
     "README.md",
     "audit_publication.py",
     "docs/REPAIR_STATE.md",
+    "docs/VM_LANE.md",
     "docs/VORGAENGE_LOG.md",
     "fixtures/manifest.json",
     "fixtures/synthetic-workflow.yml",
     "inventory.py",
     "publication-policy.json",
-    "test_candidate.py"
+    "test_candidate.py",
+    "test_vm.py",
+    "vm/exit.c",
+    "vm/fetch.py",
+    "vm/guest-init.sh",
+    "vm/image-lock.json",
+    "vm/image.py",
+    "vm/lane.py",
+    "vm/paths.py",
+    "vm/qualify.py"
   ],
   "reference_disclosure": {
     "target_repository": "Necessary destination, already known to its owner",
@@ -23,7 +33,8 @@
     "candidate_branch": "Locally chosen repair branch; necessary review destination",
     "source_references_embedded": false,
     "source_workflow_digests_embedded": false,
-    "synthetic_fixture_digests_only": true
+    "synthetic_fixture_digests_only": true,
+    "public_image_lock": "Public distribution URL, digest and public signing fingerprint; required image provenance, no private host-derived image digests"
   },
   "merge_control": "PROCESS_ENFORCED",
   "qualification": {
@@ -32,7 +43,8 @@
     "EXACT_SOURCE_CI_PASS": "NOT_RUN",
     "STATUS_WRITEBACK_VERIFIED": "NOT_VERIFIED",
     "MERGE_ELIGIBLE": false,
-    "MERGED": false
+    "MERGED": false,
+    "VM_ISOLATION_QUALIFIED": "PRIVATE_LIVE_LEDGER_REQUIRED_FOR_THIS_EXACT_CODE"
   },
   "publication_authorized": false
 }

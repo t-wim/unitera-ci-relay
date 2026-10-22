@@ -1,2 +1,14 @@
 __pycache__/
 *.py[cod]
+/private/
+/assets/
+/runs/
+*.iso
+*.qcow2
+*.img
+*.initrd
+*.bundle
+*.log
+*.part
+/vm/exit-success
+/vm/exit-failure

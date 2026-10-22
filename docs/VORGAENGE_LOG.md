@@ -15,3 +15,17 @@ Risk: publication checks do not establish a VM boundary, complete real CI, crede
 status writeback or merge eligibility. Tests, exact head and outcomes are supplied in the
 local packet; no success is asserted here before execution. No push or workflow run occurred.
 Rollback: abandon the new branch while preserving the disabled lane and prior private archive.
+
+## 2026-10-22T03:45:02.569182+00:00 — Offline disposable VM preparation and synthetic qualification
+
+Owner/scope: relay-local VM lifecycle, invented isolation cases and sanitized operations.
+Added a public-image lock, private asset verification/builder, bounded QEMU/user-scope
+controller and synthetic host-file/TCP/Unix/credential and state-isolation probes.
+Images, host details and all evidence stay outside the publication tree. No runner
+registration, workflow enablement, source execution, token, status or merge occurred.
+Local tests cover input/image/path/resource/qualification boundaries; live cases and
+exact code digests are recorded privately. Earlier failed smoke evidence is preserved.
+Risk/limits: this is an offline, single-VM RAM-only synthetic profile, not full CI or
+credentialed runner admission. Installed OS/package database remains part of the trust base.
+Rollback: stop only task-owned scopes and reconcile their inputs; preserve evidence and
+keep the legacy runner stopped and dispatch workflows disabled. See VM_LANE.md.

@@ -1,0 +1,8 @@
+{
+  "image_url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-virt-3.24.2-x86_64.iso",
+  "sha256": "3ab424762af704b2c2a9e57df1dc37f982af260071504d977f2fb96822e7130b",
+  "signing_key_url": "https://alpinelinux.org/keys/ncopa.asc",
+  "signing_fingerprint": "0482D84022F52DF1C4E7CD43293ACD0907D9495A",
+  "image_kind": "Alpine virtual ISO; derived RAM-only guest initramfs",
+  "third_party_tools": "Allowlisted installed OS binaries checked against package checksums; exact derived hashes stay private"
+}
