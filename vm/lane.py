@@ -96,6 +96,56 @@ def command(assets, job, unit):
             '-p', 'TasksMax=128', *wrapped]
 
 
+def cleanup(unit, owned_scope, proc, observed_pids, job, evidence, log):
+    """Attempt every owned-resource teardown even when another step fails."""
+    errors = []
+    def attempt(step, action, default=None):
+        try:
+            return action()
+        except Exception as error:
+            errors.append({'step': step, 'error': type(error).__name__})
+            return default
+
+    if owned_scope:
+        observed_pids.update(attempt('initial_scope_pids', lambda: scope_pids(unit), []))
+        # Ownership, not a fallible LoadState query, authorizes these exact-scope actions.
+        killed = attempt('scope_kill', lambda: systemctl('kill', '--signal=SIGKILL', unit))
+        stopped = attempt('scope_stop', lambda: systemctl('stop', unit))
+    else:
+        killed = stopped = None
+    if proc is not None:
+        attempt('process_wait', lambda: proc.wait(timeout=10))
+        if attempt('process_poll', proc.poll) is None:
+            attempt('process_kill', proc.kill)
+            attempt('process_reap', lambda: proc.wait(timeout=5))
+    attempt('console_write', lambda: (evidence / 'console.log').write_bytes(log))
+    attempt('job_remove', lambda: shutil.rmtree(job))
+    def reap_observed():
+        deadline = time.monotonic() + 5
+        while any(Path('/proc', str(pid)).exists() for pid in observed_pids) and time.monotonic() < deadline:
+            time.sleep(0.05)
+    attempt('observed_reap', reap_observed)
+    remaining = attempt('final_scope_pids', lambda: scope_pids(unit))
+    final = attempt('final_scope_state', lambda: systemctl('show', unit, '-p', 'LoadState', '--value'))
+    state = final.stdout.strip() if final is not None and final.returncode == 0 else 'UNKNOWN'
+    live = attempt('observed_pid_inventory', lambda: [pid for pid in observed_pids if Path('/proc', str(pid)).exists()])
+    removed = attempt('job_inventory', lambda: not job.exists(), False)
+    files = attempt('job_file_inventory', lambda: sorted(str(path.relative_to(job)) for path in job.rglob('*')) if job.exists() else [])
+    exited = proc is None or attempt('final_process_poll', proc.poll) is not None
+    record = {'cleanup_errors': errors, 'scope_ownership_verified': owned_scope,
+              'final_scope_load_state': state, 'observed_pids_still_exist': live,
+              'observed_pids': sorted(observed_pids), 'scope_remaining_pids': remaining,
+              'job_directory_removed': removed, 'job_files_remaining': files,
+              'cleanup_verified': (not errors and remaining == [] and live == []
+                                   and removed and state == 'not-found' and exited)}
+    if proc is not None:
+        record['process_returncode'] = proc.returncode
+    for name, result in [('scope_kill_exit', killed), ('scope_stop_exit', stopped)]:
+        if result is not None:
+            record[name] = result.returncode
+    return record
+
+
 def acquire_slot(assets, private):
     if assets.parent != private.parent:
         raise ValueError('assets and run evidence must share the same private task root')
@@ -223,51 +273,24 @@ def run(assets, private, mode, probe, outcome='success'):
         record['error'] = type(error).__name__ + ': ' + str(error)
     finally:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        if owned_scope:
-            observed_pids.update(scope_pids(unit))
-        record['scope_ownership_verified'] = owned_scope
-        loaded = systemctl('show', unit, '-p', 'LoadState', '--value').stdout.strip()
-        if loaded == 'loaded' and owned_scope:
-            record['scope_kill_exit'] = systemctl('kill', '--signal=SIGKILL', unit).returncode
-            record['scope_stop_exit'] = systemctl('stop', unit).returncode
-        if proc is not None:
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5)
-            record['process_returncode'] = proc.returncode
-        (evidence / 'console.log').write_bytes(log)
-        shutil.rmtree(job)
-        reap_deadline = time.monotonic() + 5
-        while any(Path('/proc', str(pid)).exists() for pid in observed_pids) and time.monotonic() < reap_deadline:
-            time.sleep(0.05)
-        remaining = scope_pids(unit)
-        final_scope_state = systemctl('show', unit, '-p', 'LoadState', '--value')
-        record['final_scope_load_state'] = final_scope_state.stdout.strip()
-        record['observed_pids_still_exist'] = [pid for pid in observed_pids if Path('/proc', str(pid)).exists()]
-        record['observed_pids'] = sorted(observed_pids)
-        record['scope_remaining_pids'] = remaining
-        record['job_directory_removed'] = not job.exists()
-        record['cleanup_verified'] = (not remaining and not job.exists()
-                                      and not record['observed_pids_still_exist']
-                                      and final_scope_state.stdout.strip() == 'not-found'
-                                      and (proc is None or proc.poll() is not None))
-        record['duration_seconds'] = round(time.monotonic() - started, 3)
-        record['inputs_unchanged'] = all(hashlib.sha256((assets / name).read_bytes()).hexdigest() == manifest[field]
-                                        for name, field in [('kernel', 'kernel_sha256'), ('synthetic-initrd', 'initrd_sha256')])
-        limits = record.get('observed_cgroup_limits', {})
-        cpu = limits.get('cpu.max', '').split()
-        record['limits_verified'] = (limits.get('memory.max') == str(GIB) and limits.get('memory.swap.max') == '0'
-                                     and limits.get('pids.max') == '128' and len(cpu) == 2 and cpu[0].isdigit()
-                                     and int(cpu[0]) <= int(cpu[1]))
-        record['qualification_pass'] = (record['outcome'] == outcome and record['ready_seen']
-                                        and set(record['checks']) == REQUIRED_CHECKS
-                                        and all(value == 'PASS' for value in record['checks'].values())
-                                        and owned_scope and record['cleanup_verified'] and record['inputs_unchanged'] and record['limits_verified'])
-        (evidence / 'result.json').write_text(json.dumps(record, indent=2) + '\n')
-        signal.signal(signal.SIGTERM, old_handler)
-        lock.close()
+        try:
+            record.update(cleanup(unit, owned_scope, proc, observed_pids, job, evidence, log))
+            record['duration_seconds'] = round(time.monotonic() - started, 3)
+            record['inputs_unchanged'] = all(hashlib.sha256((assets / name).read_bytes()).hexdigest() == manifest[field]
+                                            for name, field in [('kernel', 'kernel_sha256'), ('synthetic-initrd', 'initrd_sha256')])
+            limits = record.get('observed_cgroup_limits', {})
+            cpu = limits.get('cpu.max', '').split()
+            record['limits_verified'] = (limits.get('memory.max') == str(GIB) and limits.get('memory.swap.max') == '0'
+                                         and limits.get('pids.max') == '128' and len(cpu) == 2 and cpu[0].isdigit()
+                                         and int(cpu[0]) <= int(cpu[1]))
+            record['qualification_pass'] = (record['outcome'] == outcome and record['ready_seen']
+                                            and set(record['checks']) == REQUIRED_CHECKS
+                                            and all(value == 'PASS' for value in record['checks'].values())
+                                            and owned_scope and record['cleanup_verified'] and record['inputs_unchanged'] and record['limits_verified'])
+            (evidence / 'result.json').write_text(json.dumps(record, indent=2) + '\n')
+        finally:
+            signal.signal(signal.SIGTERM, old_handler)
+            lock.close()
     return record, evidence
 
 

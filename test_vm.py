@@ -7,7 +7,7 @@ import sys
 import types
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'vm'))
@@ -98,6 +98,57 @@ class VMContractTests(unittest.TestCase):
         self.assertIn('switch_root /newroot /init stage2', source)
 
 
+class CleanupRegressionTests(unittest.TestCase):
+    def test_systemctl_timeouts_do_not_skip_process_or_files(self):
+        with tempfile.TemporaryDirectory(dir=ROOT.parent) as directory:
+            root = Path(directory); job = root / 'job'; job.mkdir()
+            (job / 'synthetic').write_text('invented')
+            proc = Mock(returncode=-9)
+            proc.wait.side_effect = [subprocess.TimeoutExpired('synthetic', 10), -9]
+            proc.poll.side_effect = [None, -9]
+            with patch.object(lane, 'systemctl', side_effect=subprocess.TimeoutExpired('systemctl', 15)), \
+                 patch.object(lane, 'scope_pids', side_effect=subprocess.TimeoutExpired('systemctl', 15)):
+                result = lane.cleanup('synthetic.scope', True, proc, set(), job, root, b'synthetic')
+            self.assertEqual(proc.wait.call_count, 2)
+            proc.kill.assert_called_once()
+            self.assertFalse(job.exists())
+            self.assertFalse(result['cleanup_verified'])
+            self.assertIsNone(result['scope_remaining_pids'])
+            self.assertEqual(result['final_scope_load_state'], 'UNKNOWN')
+            self.assertEqual({e['step'] for e in result['cleanup_errors']},
+                             {'initial_scope_pids', 'scope_kill', 'scope_stop', 'process_wait',
+                              'final_scope_pids', 'final_scope_state'})
+
+    def test_failed_removal_and_remaining_processes_are_reported(self):
+        with tempfile.TemporaryDirectory(dir=ROOT.parent) as directory:
+            root = Path(directory); job = root / 'job'; job.mkdir()
+            (job / 'synthetic-input').write_text('invented')
+            proc = Mock(returncode=None); proc.poll.return_value = None
+            proc.wait.side_effect = subprocess.TimeoutExpired('synthetic', 1)
+            with patch.object(lane, 'systemctl', return_value=types.SimpleNamespace(stdout='loaded', returncode=0)), \
+                 patch.object(lane, 'scope_pids', return_value=[99999999]), \
+                 patch.object(lane.shutil, 'rmtree', side_effect=PermissionError):
+                result = lane.cleanup('synthetic.scope', True, proc, set(), job, root, b'')
+            self.assertFalse(result['cleanup_verified'])
+            self.assertFalse(result['job_directory_removed'])
+            self.assertEqual(result['job_files_remaining'], ['synthetic-input'])
+            self.assertEqual(result['scope_remaining_pids'], [99999999])
+            self.assertIsNone(result['process_returncode'])
+            self.assertIn('job_remove', [e['step'] for e in result['cleanup_errors']])
+            proc.kill.assert_called_once()
+
+    def test_successful_cleanup_and_no_foreign_scope_mutation(self):
+        for owned in [True, False]:
+            with tempfile.TemporaryDirectory(dir=ROOT.parent) as directory:
+                root = Path(directory); job = root / 'job'; job.mkdir()
+                with patch.object(lane, 'systemctl', return_value=types.SimpleNamespace(stdout='not-found', returncode=0)) as ctl, \
+                     patch.object(lane, 'scope_pids', return_value=[]):
+                    result = lane.cleanup('synthetic.scope', owned, None, set(), job, root, b'')
+                self.assertTrue(result['cleanup_verified'])
+                if not owned:
+                    self.assertEqual([call.args[0] for call in ctl.call_args_list], ['show'])
+
+
 class QualificationDecisionTests(unittest.TestCase):
     def complete(self):
         outcomes = ['success', 'failure', 'timeout', 'cancel', 'success']
@@ -112,6 +163,22 @@ class QualificationDecisionTests(unittest.TestCase):
                             'termination_requested_while_running': True, 'cancel_signal_received': 15,
                             'ready_to_timeout_seconds': 2.1})
         return results, outcomes, {'loopback': True, 'lan': True, 'unix': True}, []
+
+    def test_full_cli_denies_changed_implementation_despite_passing_jobs(self):
+        report = {'VM_ISOLATION_QUALIFIED': False, 'implementation_unchanged': False,
+                  'results': [{'qualification_pass': True}] * 5}
+        with patch.object(qualifier, 'qualify', return_value=report):
+            self.assertEqual(qualifier.main(['--assets', '/synthetic', '--private', '/synthetic']), 1)
+        report['VM_ISOLATION_QUALIFIED'] = True
+        with patch.object(qualifier, 'qualify', return_value=report):
+            self.assertEqual(qualifier.main(['--assets', '/synthetic', '--private', '/synthetic']), 0)
+
+    def test_smoke_cli_is_separate_and_requires_exactly_one_pass(self):
+        for results, expected in [([{'qualification_pass': True}], 0), ([], 1),
+                                  ([{'qualification_pass': False}], 1),
+                                  ([{'qualification_pass': True}] * 5, 1)]:
+            with patch.object(qualifier, 'qualify', return_value={'VM_ISOLATION_QUALIFIED': False, 'results': results}):
+                self.assertEqual(qualifier.main(['--assets', '/synthetic', '--private', '/synthetic', '--smoke']), expected)
 
     def test_only_complete_five_run_evidence_can_qualify(self):
         self.assertTrue(qualifier.qualified(*self.complete()))

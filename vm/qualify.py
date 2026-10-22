@@ -125,12 +125,24 @@ def qualify(assets, private, outcomes):
     return record
 
 
-if __name__ == '__main__':
+def exit_code(report, smoke=False):
+    if smoke:
+        # A smoke run tests one case; it never asserts full VM qualification.
+        results = report.get('results', [])
+        return 0 if len(results) == 1 and results[0].get('qualification_pass') is True else 1
+    return 0 if report.get('VM_ISOLATION_QUALIFIED') is True else 1
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--assets', type=Path, required=True)
     parser.add_argument('--private', type=Path, required=True)
     parser.add_argument('--smoke', action='store_true')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     outcomes = ['success'] if args.smoke else ['success', 'failure', 'timeout', 'cancel', 'success']
     report = qualify(args.assets, args.private, outcomes)
-    raise SystemExit(0 if all(r['qualification_pass'] for r in report['results']) and len(report['results']) == len(outcomes) else 1)
+    return exit_code(report, smoke=args.smoke)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

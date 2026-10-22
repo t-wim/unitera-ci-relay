@@ -29,3 +29,14 @@ Risk/limits: this is an offline, single-VM RAM-only synthetic profile, not full 
 credentialed runner admission. Installed OS/package database remains part of the trust base.
 Rollback: stop only task-owned scopes and reconcile their inputs; preserve evidence and
 keep the legacy runner stopped and dispatch workflows disabled. See VM_LANE.md.
+
+## 2026-10-22 — Bounded cleanup and qualification exit-code repair
+
+Scope: two review findings only. Cleanup steps independently record exceptions and continue
+with owned-scope termination, launcher kill/reap, job removal and final inventories. Unknown
+scope state, leftover files/processes or cleanup errors deny qualification. Handler and lock
+restoration run even if final receipt generation fails. Full qualification CLI exits from the
+final VM_ISOLATION_QUALIFIED decision; smoke separately requires one passing case.
+Regression tests inject systemctl timeouts, process wait/removal failures and implementation
+drift. Earlier live VM evidence remains bound to its earlier implementation; this repair does
+not inherit that qualification. Runner and workflows remain disabled. No push or merge.
