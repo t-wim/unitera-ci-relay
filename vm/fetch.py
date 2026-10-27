@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 import subprocess
 import time
-import urllib.request
 
+from ci_util import guarded_urlopen
 from paths import private_path
 
 
@@ -18,7 +18,10 @@ def download(url, destination, maximum):
     if partial.exists():
         raise ValueError('existing partial download requires explicit reconciliation')
     started, size = time.monotonic(), 0
-    with urllib.request.urlopen(url, timeout=30) as response, partial.open('xb') as target:
+    # guarded_urlopen enforces https-only, the pinned-host allowlist, global-IP
+    # resolution for both address families and redirect rejection (see ci_util);
+    # the lock checks in fetch() additionally pin the exact public publishers.
+    with guarded_urlopen(url) as response, partial.open('xb') as target:
         while chunk := response.read(1024 * 1024):
             size += len(chunk)
             if size > maximum or time.monotonic() - started > 300:

@@ -26,3 +26,7 @@ image signature/digest plus package ownership/checksums of guest tools.
 does not qualify real CI parity, exact-source CI, status writeback, source merge or deployment.
 Keep both workflows disabled and the legacy relay runner stopped. This local candidate is
 for publication review; no push or merge is performed by the VM tools.
+
+A separate source-CI executor candidate (branch codex/source-ci-executor-01) extends this
+relay with real pinned-commit source checks inside the disposable VM lane; see
+docs/SOURCE_CI.md. The quarantine posture of both workflows is unchanged.
