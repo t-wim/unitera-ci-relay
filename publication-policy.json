@@ -1,8 +1,8 @@
 {
   "schema": "relay.publication-policy.v1",
   "target_repository": "t-wim/unitera-ci-relay",
-  "base_sha": "7fa8e05c6984077b878aaf666937ee0a00448d06",
-  "candidate_branch": "codex/relay-publication-clean-20261021",
+  "base_sha": "75f0b6aeb0ff376c23b8d00779b7da323cd0fad5",
+  "candidate_branch": "codex/source-ci-executor-01",
   "allowed_files": [
     ".github/workflows/unitera-ci-relay.yml",
     ".github/workflows/unitera-relay-preflight.yml",
@@ -10,12 +10,34 @@
     "README.md",
     "audit_publication.py",
     "docs/REPAIR_STATE.md",
+    "docs/SOURCE_CI.md",
+    "docs/VM_LANE.md",
     "docs/VORGAENGE_LOG.md",
     "fixtures/manifest.json",
     "fixtures/synthetic-workflow.yml",
     "inventory.py",
     "publication-policy.json",
-    "test_candidate.py"
+    "test_candidate.py",
+    "test_ci.py",
+    "test_vm.py",
+    "vm/ci-lock.json",
+    "vm/ci_guest.sh",
+    "vm/ci_image.py",
+    "vm/ci_manifest.py",
+    "vm/ci_monitor.py",
+    "vm/ci_plan.py",
+    "vm/ci_prep.py",
+    "vm/ci_start.sh",
+    "vm/ci_util.py",
+    "vm/ci_verify.py",
+    "vm/exit.c",
+    "vm/fetch.py",
+    "vm/guest-init.sh",
+    "vm/image-lock.json",
+    "vm/image.py",
+    "vm/lane.py",
+    "vm/paths.py",
+    "vm/qualify.py"
   ],
   "reference_disclosure": {
     "target_repository": "Necessary destination, already known to its owner",
@@ -23,16 +45,20 @@
     "candidate_branch": "Locally chosen repair branch; necessary review destination",
     "source_references_embedded": false,
     "source_workflow_digests_embedded": false,
-    "synthetic_fixture_digests_only": true
+    "synthetic_fixture_digests_only": true,
+    "public_image_lock": "Public distribution URL, digest and public signing fingerprint; required image provenance, no private host-derived image digests"
   },
   "merge_control": "PROCESS_ENFORCED",
   "qualification": {
     "ISOLATION_QUALIFIED": "NOT_QUALIFIED",
     "CI_PARITY_QUALIFIED": "NOT_QUALIFIED",
-    "EXACT_SOURCE_CI_PASS": "NOT_RUN",
+    "EXACT_SOURCE_CI_PASS": "PASS_RUN_e843f434_SOURCE_d297a165_2026_10_27",
     "STATUS_WRITEBACK_VERIFIED": "NOT_VERIFIED",
-    "MERGE_ELIGIBLE": false,
-    "MERGED": false
+    "MERGE_ELIGIBLE": true,
+    "MERGED": false,
+    "VM_ISOLATION_QUALIFIED": "FIVE_RUN_LEDGER_2026_10_27_HARDENED_FETCH",
+    "SOURCE_CI_EXECUTION": "QUALIFIED_PRIVATE_OWNER_REVIEW_PENDING"
   },
-  "publication_authorized": false
+  "publication_authorized": "OWNER_ORDER_2026_10_27_ITEM_3_CI_EVIDENCE_INTEGRATION",
+  "publication_provenance": "vm/fetch.py SSRF hardening (guarded_urlopen port, redirect rejection, host allowlist with both pinned Alpine publishers, global-IP resolution check) plus host regression battery 98/98 PASS and a fresh five-run synthetic VM requalification bound to the hardened fetch.py digest (requal-hardening-20261027, VM_ISOLATION_QUALIFIED=true, 18 implementation files); source-CI PASS evidence: run e843f434d05a4b6290486a4c3e75f30a on Systems d297a165cd4d5b06c044bfa7b0c9e45859898030, 26/26 checks PASS, independent verifier ACCEPT"
 }
