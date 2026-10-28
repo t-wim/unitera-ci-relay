@@ -422,8 +422,15 @@ def watch(run_dir_path, deadline_override=None):
                     owned_scope = True
                     observed_pids.update(pids)
                 elif (run_dir / 'started-at.txt').exists() and time.monotonic() - started > 60:
-                    # Drained transient scope: the VM is gone but systemd may keep the
-                    # empty scope active indefinitely; never wait for a stuck rc file.
+                    # Drained transient scope: this host's user manager can leave an
+                    # empty scope active indefinitely. Stop the owned empty scope so the
+                    # mechanical launcher unblocks and records the authoritative VM exit
+                    # code, then finish through the normal exited path.
+                    lane.systemctl('stop', unit)
+                    for _grace in range(20):
+                        if (run_dir / 'vm-exit.rc').exists():
+                            break
+                        time.sleep(1)
                     outcome = 'exited'
                     break
                 metrics = lane.scope_metrics(unit)
