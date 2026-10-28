@@ -35,10 +35,16 @@ def fixture(root, outcome="success", run_id="1" * 32):
         "source_archive": {"sha256": "c"*64},
         "guest_image": {"sha256": "d"*64},
         "python_runtime": {"sha256": "e"*64},
-        "vm_exit_code": 33, "source_verified_inside_guest": True,
+        "vm_exit_code": 35 if outcome == "failure" else (None if outcome in ("timeout","cancel") else 33),
+        "source_verified_inside_guest": True,
         "toolchain_verified_inside_guest": True, "host_test_execution": False,
         "expected_outcome": outcome, "observed_outcome": outcome,
         "negative_control_verified": outcome != "success",
+        "failure_exit_observed": outcome == "failure",
+        "terminated_while_running": outcome in ("timeout", "cancel"),
+        "termination_reason": outcome if outcome in ("timeout", "cancel") else None,
+        "termination_signal": 15 if outcome == "cancel" else None,
+        "fresh_successor_verified": outcome == "success",
         "logs": logs, "isolation": {k: "PASS" for k in ISOLATION_CHECKS},
         "cleanup": {k: True for k in ("scope_reaped", "no_owned_processes",
                                      "disk_overlay_removed", "host_credentials_absent",
@@ -104,6 +110,10 @@ class MarketingCandidateTests(unittest.TestCase):
             data = json.loads((paths[-1]/"receipt.json").read_text())
             data["run_id"] = "1"*32
             (paths[-1]/"receipt.json").write_text(json.dumps(data))
+            self.assertFalse(evaluate(paths, SOURCE, RELAY)["evidence_consistent"])
+            data["run_id"] = "5" * 32
+            data["fresh_successor_verified"] = False
+            (paths[4] / "receipt.json").write_text(json.dumps(data))
             self.assertFalse(evaluate(paths, SOURCE, RELAY)["evidence_consistent"])
 
     def test_status_denied_without_separate_gates(self):

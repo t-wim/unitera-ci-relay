@@ -30,6 +30,8 @@ def evaluate(case_dirs, source_sha, relay_sha):
             errors.append(f"case {index}: wrong outcome")
         if expected == "success":
             errors.extend(f"case {index}: {issue}" for issue in issues)
+            if index == 5 and receipt.get("fresh_successor_verified") is not True:
+                errors.append(f"case {index}: successor freshness unproven")
         else:
             # A deliberate failure/timeout/cancel cannot have all test checks
             # succeed. The independent host controller must separately verify
@@ -49,6 +51,16 @@ def evaluate(case_dirs, source_sha, relay_sha):
                 errors.append(f"case {index}: host execution forbidden")
             if receipt.get("source_sha") != source_sha or receipt.get("relay_sha") != relay_sha:
                 errors.append(f"case {index}: commit binding mismatch")
+            if expected == "failure":
+                if receipt.get("vm_exit_code") == 33 or receipt.get("failure_exit_observed") is not True:
+                    errors.append(f"case {index}: deliberate failure exit unproven")
+            elif expected in ("timeout", "cancel"):
+                if receipt.get("terminated_while_running") is not True:
+                    errors.append(f"case {index}: live termination unproven")
+                if receipt.get("termination_reason") != expected:
+                    errors.append(f"case {index}: wrong termination reason")
+                if expected == "cancel" and receipt.get("termination_signal") != 15:
+                    errors.append(f"case {index}: SIGTERM not observed")
     consistent = not errors and len(seen)==len(QUALIFICATION_CASES)
     return {"schema":"relay.marketing-vm-qualification.v1",
             "qualified":False,
