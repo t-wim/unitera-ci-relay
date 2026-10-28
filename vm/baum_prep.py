@@ -30,7 +30,7 @@ REPOSITORY = 'baum777/baum-os'
 REMOTES = {'https://github.com/baum777/baum-os.git', 'git@github.com:baum777/baum-os.git'}
 SHA_RE = re.compile(r'[0-9a-f]{40}')
 MAX_SYMLINK_TARGET_BYTES = 4096
-PNPM_SHIM = '#!/bin/sh\nexec /usr/bin/node /pnpm/bin/pnpm.mjs --offline --store-dir /ws/store "$@"\n'
+PNPM_SHIM = '#!/bin/sh\nexec /usr/bin/node /pnpm/bin/pnpm.mjs "$@"\n'
 
 
 def validate_path(path):
@@ -90,7 +90,9 @@ def plan(repo, private, commit):
         if recorded == commit:
             return {'status': 'reconciled', 'manifest': str(existing)}
         raise ValueError('assets exist for a different commit; reconcile explicitly before re-preparing')
-    for stale in ['staging-src', 'staging-home', 'store', 'pnpm-pkg', 'node-dist']:
+    # staging-home, store, pnpm-pkg and node-dist are retained inputs whose digests
+    # verify/finalize re-bind on every re-preparation; only staging trees are stale.
+    for stale in ['staging-src']:
         if (assets / stale).exists():
             raise ValueError('stale preparation state exists: ' + stale + '; reconcile explicitly')
     import fetch as vendor_fetch
@@ -278,6 +280,12 @@ def verify(private, commit):
         ''.join(records[name]['sha256'] + '  ' + name + '\n' for name in sorted(records)))
     home = assets / 'staging-home'
     (home / '.local' / 'share').mkdir(parents=True, exist_ok=True)
+    # pnpm 11's supply-chain/lockfile verification needs registry metadata even with
+    # --offline (proven live: ENOTFOUND retries inside the isolated guest). The trusted
+    # host store build populated pnpm's own metadata cache; it ships with the workspace
+    # image (guest HOME=/ws/work) and is bound by digest here.
+    _cache = store_manifest_digest(home / '.cache' / 'pnpm')
+    pnpm_cache = {'file_count': _cache['file_count'], 'manifest_sha256': _cache['manifest_sha256']}
     q = shlex.quote
     write_script(prep / 'steps2.sh', [
         'cd ' + q(str(staging_src)),
@@ -307,7 +315,7 @@ def verify(private, commit):
             'file_count': len(inventory), 'archive_sha256': sha256_file(archive_path),
             'lockfile_sha256': sha256_file(staging_src / 'pnpm-lock.yaml'),
             'package_json_sha256': sha256_file(staging_src / 'package.json'),
-            'package_manager': package_manager,
+            'package_manager': package_manager, 'pnpm_cache': pnpm_cache,
             'symlinks': symlinks, 'gitlinks': gitlinks, 'toolchain': toolchain}
 
 
@@ -333,6 +341,14 @@ def disk(private, commit, verified):
     shutil.copytree(prep / 'staging-src', disk_root / 'src', symlinks=True)
     shutil.rmtree(disk_root / 'src' / 'node_modules', ignore_errors=True)
     shutil.copytree(assets / 'store', disk_root / 'store')
+    # pnpm metadata/verification cache under the guest HOME so the offline supply-chain
+    # verification resolves without any network (guest is restrict=on by design).
+    shutil.copytree(assets / 'staging-home' / '.cache', disk_root / 'work' / '.cache',
+                    dirs_exist_ok=True, symlinks=True)
+    state_dir = assets / 'staging-home' / '.local' / 'state'
+    if state_dir.is_dir():
+        shutil.copytree(state_dir, disk_root / 'work' / '.local' / 'state',
+                        dirs_exist_ok=True, symlinks=True)
     content_bytes = sum(f.stat().st_size for f in disk_root.rglob('*') if f.is_file())
     # The guest reconstructs .git (re-hashed blobs) and installs node_modules into the
     # same overlay; size for that growth instead of the Systems 6 GiB floor.
@@ -369,6 +385,7 @@ def finalize(private, commit, verified):
                            'symlink_count': len(verified['symlinks']),
                            'gitlink_count': len(verified['gitlinks'])},
                 'package_manager': verified['package_manager'],
+                'pnpm_cache': verified.get('pnpm_cache'),
                 'toolchain': verified['toolchain'],
                 'store': {k: v for k, v in store.items() if k != 'manifest'},
                 'workspace_image': image_record}
