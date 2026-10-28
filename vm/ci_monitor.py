@@ -198,7 +198,7 @@ def launch(private, plan_name, mode, abort_delay_s=None, deadline_s=None, guest_
                     build_argv(assets_dir / 'kernel', assets_dir / 'ws-base.img', job_dir, unit, profile))
     (run_dir / 'launch' / 'overlay.txt').write_text(str(assets_dir / 'ws-base.img') + '\n' + str(job_dir / 'ws.qcow2') + '\n')
     run = {'run_id': run_id, 'run_dir': str(run_dir), 'unit': unit, 'mode': mode,
-           'abort_delay_s': abort_delay, 'profile': profile, 'plan_name': plan_name,
+           'abort_delay_s': abort_delay_s, 'profile': profile, 'plan_name': plan_name,
            'repository': repository,
            '_config': {key: str(value) for key, value in config.items()},
            'source_commit_sha': prep['source']['commit'],

@@ -328,11 +328,13 @@ def disk(private, commit, verified):
     (disk_root / 'work').mkdir(parents=True)
     # The guest must receive the exact committed tree (no node_modules, no .git);
     # its own c1b check re-derives the tree identity from this materialized content.
-    shutil.copytree(assets / 'staging-src', disk_root / 'src',
+    shutil.copytree(prep / 'staging-src', disk_root / 'src',
                     ignore=shutil.ignore_patterns('node_modules'), symlinks=True)
     shutil.copytree(assets / 'store', disk_root / 'store')
     content_bytes = sum(f.stat().st_size for f in disk_root.rglob('*') if f.is_file())
-    image_bytes = max(int(content_bytes * 1.5) + 3 * 1024 ** 3, 8 * 1024 ** 3)
+    # The guest reconstructs .git (re-hashed blobs) and installs node_modules into the
+    # same overlay; size for that growth instead of the Systems 6 GiB floor.
+    image_bytes = max(int(content_bytes * 1.5) + 3 * 1024 ** 3, 12 * 1024 ** 3)
     q = shlex.quote
     write_script(prep / 'steps3.sh', [
         'mkfs.ext4 -F -q -L UNITERA_CI_WS -d ' + q(str(disk_root)) + ' -b 4096 ' +
