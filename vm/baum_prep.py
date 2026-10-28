@@ -30,7 +30,7 @@ REPOSITORY = 'baum777/baum-os'
 REMOTES = {'https://github.com/baum777/baum-os.git', 'git@github.com:baum777/baum-os.git'}
 SHA_RE = re.compile(r'[0-9a-f]{40}')
 MAX_SYMLINK_TARGET_BYTES = 4096
-PNPM_SHIM = '#!/bin/sh\nexec /usr/bin/node /pnpm/bin/pnpm.mjs "$@"\n'
+PNPM_SHIM = '#!/bin/sh\nexec /usr/bin/node /pnpm/bin/pnpm.mjs --offline --store-dir /ws/store "$@"\n'
 
 
 def validate_path(path):
