@@ -250,6 +250,8 @@ class TypedTreeTests(unittest.TestCase):
             prep = private / 'prep'
             assets = private / 'ci-assets'
             (assets / 'store').mkdir(parents=True)
+            (assets / 'staging-home' / '.cache' / 'pnpm').mkdir(parents=True)
+            (assets / 'staging-home' / '.cache' / 'pnpm' / 'metadata.json').write_text('{}')
             (prep / 'staging-src' / '.quarantine').mkdir(parents=True)
             (prep / 'staging-src' / 'a.txt').write_text('A\n')
             (prep / 'staging-src' / 'node_modules').mkdir()
