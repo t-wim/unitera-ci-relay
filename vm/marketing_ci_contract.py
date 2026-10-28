@@ -10,7 +10,7 @@ import re
 SOURCE_REPOSITORY = "baum777/unitera_marketing_agent-team"
 RUNNER_LABELS = ("self-hosted", "Linux", "X64", "unitera-ci", "relay")
 ADMISSION_STATE = "QUARANTINED"
-SHA_RE = re.compile(r"[0-9a-f]{40}\\Z")
+SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 
 # Exact offline acceptance commands, permitted only in qualified disposable VM.
 PYTHON_VM_PLAN = (
