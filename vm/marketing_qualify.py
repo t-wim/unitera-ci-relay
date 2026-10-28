@@ -114,7 +114,8 @@ def _materialize_logs(run_dir, records, plan_entries):
         name = entry['name']
         if name not in records['digests'] or name not in records['exits']:
             continue
-        data = ('\n'.join(records['logs'].get(name, [])) + '\n').encode()
+        data = ('\n'.join(records['logs'].get(name, [])) + '\n').encode() \
+            if records['logs'].get(name) else b''
         if hashlib.sha256(data).hexdigest() != records['digests'][name]:
             raise ValueError('reconstructed log digest differs from console record: ' + name)
         (logs_dir / (name + '.log')).write_bytes(data)
