@@ -91,6 +91,7 @@ def finalize(private, commit):
     image_record = {'bytes': (assets / 'ws-base.img').stat().st_size,
                     'sha256': sha256_file(assets / 'ws-base.img'), 'label': 'UNITERA_MKT_WS',
                     'content': {'src': 'custody-verified source tree', 'work': 'empty'}}
+    (assets / 'ws-image.json').write_text(json.dumps(image_record, indent=2) + '\n')
     manifest = {'schema': 'relay.marketing-prep.v1',
                 'prepared_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 'source_repository': SOURCE_REPO,
