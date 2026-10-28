@@ -30,7 +30,16 @@ REPOSITORY = 'baum777/baum-os'
 REMOTES = {'https://github.com/baum777/baum-os.git', 'git@github.com:baum777/baum-os.git'}
 SHA_RE = re.compile(r'[0-9a-f]{40}')
 MAX_SYMLINK_TARGET_BYTES = 4096
-PNPM_SHIM = '#!/bin/sh\nexec /usr/bin/node /pnpm/bin/pnpm.mjs "$@"\n'
+# The shim is executor surface (same trust class as the Systems-lane argv translation):
+# pnpm 11 ignores the npm_config_store_dir/offline environment exports, so the offline
+# store is bound for install commands exactly like the proven probe form
+# `install --frozen-lockfile --offline --store-dir /ws/store`; all other commands
+# (run/exec of the repository scripts) stay untouched. Script bodies remain verbatim.
+PNPM_SHIM = ('#!/bin/sh\ncase "$1" in\n'
+             '  install) exec /usr/bin/node /pnpm/bin/pnpm.mjs "$@" --offline'
+             ' --store-dir /ws/store ;;\n'
+             '  *) exec /usr/bin/node /pnpm/bin/pnpm.mjs "$@" ;;\n'
+             'esac\n')
 
 
 def validate_path(path):
