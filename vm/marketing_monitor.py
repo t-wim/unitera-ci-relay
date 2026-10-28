@@ -79,7 +79,11 @@ def budget_check(profile, meminfo_text=None, free_bytes=None):
 
 
 def verify_prepared(assets_dir):
-    """Re-verify every prepared digest before a VM may launch (lock binding, DoD B4)."""
+    """Re-verify every prepared digest before a VM may launch (lock binding, DoD B4).
+
+    Three-way kernel binding: the kernel file on disk must match the image record
+    AND the prep manifest must bind the same kernel digest, so a substituted
+    guest kernel can neither boot nor counterfeit the guest check protocol."""
     prep = load_json(assets_dir / 'marketing-prep-manifest.json')
     image_record = load_json(assets_dir / 'ws-image.json')
     if sha256_file(assets_dir / 'ws-base.img') != image_record['sha256']:
@@ -93,6 +97,10 @@ def verify_prepared(assets_dir):
         raise ValueError('prep manifest not bound to the verified python runtime image')
     if prep['python_runtime']['python_bin_sha256'] != mkt_record['python_bin_sha256']:
         raise ValueError('python binary digest not bound to the verified runtime image')
+    if sha256_file(assets_dir / 'kernel') != mkt_record['kernel_sha256']:
+        raise ValueError('guest kernel digest mismatch against the built image record')
+    if prep['python_runtime'].get('kernel_sha256') != mkt_record['kernel_sha256']:
+        raise ValueError('prep manifest not bound to the verified guest kernel')
     if prep['source']['commit'] is None:
         raise ValueError('prep manifest has no source commit')
     return prep, image_record, mkt_record
@@ -149,18 +157,31 @@ def validate_config_value(key, value):
         raise ValueError('ci-config value charset rejected: ' + key)
 
 
+def scaled_resource_profile(guest_mib):
+    """Derive RAM gates from the requested guest size so a larger guest can never
+    launch against the fixed default reserve (finding: profile-bound RAM check).
+
+    QEMU itself needs headroom above the guest RAM; the host keeps a fixed
+    controller/OS reserve on top. Values only ever grow above the defaults."""
+    if not isinstance(guest_mib, int) or not 512 <= guest_mib <= 4096:
+        raise ValueError('guest_mib outside the qualified profile range (512-4096)')
+    profile = dict(PROFILE)
+    profile['guest_mib'] = guest_mib
+    profile['scope_memory_max'] = str(int(guest_mib * 1.375)) + 'M'
+    profile['mem_min_mib'] = max(PROFILE['mem_min_mib'], guest_mib + 1536)
+    profile['mem_floor_mib'] = max(PROFILE['mem_floor_mib'], guest_mib // 2 + 768)
+    return profile
+
+
 def launch(private, plan_name, mode, abort_delay_s=None, deadline_s=None, guest_mib=None,
            guest_mode=None):
     private = private_path(private)
     assets_dir = assets(private)
     prep, image_record, mkt_record = verify_prepared(assets_dir)
-    profile = dict(PROFILE)
+    profile = scaled_resource_profile(guest_mib) if guest_mib else dict(PROFILE)
     profile['plan'] = plan_name
     if deadline_s:
         profile['deadline_s'] = deadline_s
-    if guest_mib:
-        profile['guest_mib'] = guest_mib
-        profile['scope_memory_max'] = str(int(guest_mib * 1.375)) + 'M'
     budget_check(profile)
     plan = marketing_plan.plan_by_name(plan_name)
     marketing_plan.expected_check_set(plan_name)
@@ -204,6 +225,7 @@ def launch(private, plan_name, mode, abort_delay_s=None, deadline_s=None, guest_
            'source_artifact_digest': prep['source']['archive_sha256'],
            'source_inventory_digest': prep['source']['inventory_sha256'],
            'vm_image_digest': mkt_record['initrd_sha256'],
+           'vm_kernel_digest': mkt_record['kernel_sha256'],
            'base_image_digest': image_record['sha256'],
            'python_runtime_sha256': mkt_record['python_bin_sha256'],
            'python_version': prep['python_runtime']['version'],
@@ -216,6 +238,19 @@ def launch(private, plan_name, mode, abort_delay_s=None, deadline_s=None, guest_
 
 class Cancelled(Exception):
     pass
+
+
+def limits_match(metrics, profile):
+    """Full cgroup readback: memory, swap, CPU quota and PID caps must all match
+    the configured scope properties (finding: complete resource verification)."""
+    expected_memory = str(int(int(profile['scope_memory_max'][:-1]) * 1024 * 1024))
+    # cgroup v2 cpu.max is "<quota_us> <period_us>"; CPUQuota N% maps to N*1000
+    # microseconds per 100000-microsecond period.
+    expected_cpu = '%d 100000' % (int(profile['cpu_quota_percent']) * 1000)
+    return (metrics.get('memory.max') == expected_memory
+            and metrics.get('memory.swap.max') == '0'
+            and metrics.get('cpu.max') == expected_cpu
+            and metrics.get('pids.max') == str(profile['tasks_max']))
 
 
 def aggregate(run, state, cleanup_record, limits_verified, inputs_ok, vm_exit):
@@ -262,6 +297,8 @@ def aggregate(run, state, cleanup_record, limits_verified, inputs_ok, vm_exit):
 
 
 def acquire_lane_lock(private):
+    """Exclusive, nonblocking lane lock. The caller must hold it BEFORE the VM
+    launcher starts so the lock serializes execution, not just monitoring."""
     import fcntl
     lock_path = private_path(private) / 'marketing-lane.lock'
     handle = lock_path.open('a')
@@ -273,11 +310,29 @@ def acquire_lane_lock(private):
     return handle
 
 
-def watch(run_dir_path, deadline_override=None):
+def watch(run_dir_path, deadline_override=None, lane_lock=None):
+    """Watch a launched VM run.
+
+    lane_lock: an already-held exclusive lane lock acquired by the operator or
+    qualification driver BEFORE the VM launcher started. When given, it is used
+    and closed by this function (single ownership handoff); when omitted the
+    watch controller acquires the lock itself."""
+    owned = lane_lock is None
+    handle = lane_lock if lane_lock is not None else acquire_lane_lock(
+        Path(run_dir_path).parents[1])
+    try:
+        return _watch_locked(run_dir_path, deadline_override, handle)
+    finally:
+        try:
+            handle.close()
+        except BaseException:
+            pass
+
+
+def _watch_locked(run_dir_path, deadline_override, lane_lock):
     import lane
     run_dir = Path(run_dir_path)
     run = load_json(run_dir / 'run.json')
-    lane_lock = acquire_lane_lock(run_dir.parents[1])
     assets_dir = assets(run_dir.parents[1])
     prep, image_record, mkt_record = verify_prepared(assets_dir)
     profile = run['profile']
@@ -292,21 +347,7 @@ def watch(run_dir_path, deadline_override=None):
         allow_reuse_address = True
 
     port = _port_from_run(run)
-    server = ReuseTCPServer(('0.0.0.0', port), Handler)
-    server.timeout = 1
-    threading.Thread(target=server.serve_forever, daemon=True).start()
     unix_path = Path(_unix_from_run(run))
-    unix_server = socketserver.UnixStreamServer(str(unix_path), Handler)
-    threading.Thread(target=unix_server.serve_forever, daemon=True).start()
-    positive = {}
-    for address in ['127.0.0.1', _lan_from_run(run)]:
-        with socket.create_connection((address, port), timeout=2) as sock:
-            positive[address] = sock.recv(1024) == response
-    with socket.socket(socket.AF_UNIX) as sock:
-        sock.connect(str(unix_path))
-        positive['synthetic_unix_socket'] = sock.recv(1024) == response
-    if not all(positive.values()):
-        raise RuntimeError('host synthetic service positive control failed')
 
     state = {'expected': set(run['expected_checks']), 'check_lines': {}, 'exit_codes': {},
              'timeouts': {}, 'log_digests': {}, 'protocol_errors': [], 'markers': [],
@@ -320,6 +361,8 @@ def watch(run_dir_path, deadline_override=None):
     owned_scope = False
     limits_verified = False
     observed_limits = {}
+    positive = {}
+    server = unix_server = None
     outcome = 'UNKNOWN'
     scope_active_last = False
     termination_signal = None
@@ -334,6 +377,22 @@ def watch(run_dir_path, deadline_override=None):
     started = time.monotonic()
     started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     try:
+        # Host positive controls run inside the cleanup-protected region: any
+        # preflight failure still tears down the already-launched VM scope
+        # (finding: guaranteed cleanup on host preflight errors).
+        server = ReuseTCPServer(('0.0.0.0', port), Handler)
+        server.timeout = 1
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        unix_server = socketserver.UnixStreamServer(str(unix_path), Handler)
+        threading.Thread(target=unix_server.serve_forever, daemon=True).start()
+        for address in ['127.0.0.1', _lan_from_run(run)]:
+            with socket.create_connection((address, port), timeout=2) as sock:
+                positive[address] = sock.recv(1024) == response
+        with socket.socket(socket.AF_UNIX) as sock:
+            sock.connect(str(unix_path))
+            positive['synthetic_unix_socket'] = sock.recv(1024) == response
+        if not all(positive.values()):
+            raise RuntimeError('host synthetic service positive control failed')
         while True:
             try:
                 text = console_path.read_text(errors='replace') if console_path.exists() else ''
@@ -360,7 +419,7 @@ def watch(run_dir_path, deadline_override=None):
                     owned_scope = True
                     observed_pids.update(pids)
                 metrics = lane.scope_metrics(unit)
-                if metrics.get('memory.max') == str(int(int(profile['scope_memory_max'][:-1]) * 1024 * 1024)):
+                if metrics:
                     observed_limits = metrics
             available = next(int(line.split()[1]) for line in Path('/proc/meminfo').read_text().splitlines()
                              if line.startswith('MemAvailable:'))
@@ -396,8 +455,9 @@ def watch(run_dir_path, deadline_override=None):
     finally:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         try:
-            if outcome in ('timeout', 'cancelled', 'controller_error:Cancelled', 'host_reserve_lost',
-                           'console_budget_exceeded') or (outcome == 'UNKNOWN'):
+            if outcome != 'exited':
+                # Any non-clean outcome — timeout, cancellation, preflight or
+                # controller error — must tear down the launched VM scope.
                 try:
                     lane.systemctl('kill', '--signal=SIGKILL', unit)
                     lane.systemctl('stop', unit)
@@ -419,15 +479,16 @@ def watch(run_dir_path, deadline_override=None):
                     vm_exit = None
             cleanup_record = lane.cleanup(unit, owned_scope, None, observed_pids,
                                           run_dir / 'job', run_dir / 'evidence', bytes(console))
-            limits_verified = (observed_limits.get('memory.max') ==
-                               str(int(int(profile['scope_memory_max'][:-1]) * 1024 * 1024)) and
-                               observed_limits.get('memory.swap.max') == '0')
+            limits_verified = limits_match(observed_limits, profile)
             inputs_ok = (sha256_file(assets_dir / 'ws-base.img') == image_record['sha256'] and
-                         sha256_file(assets_dir / 'marketing-initrd') == mkt_record['initrd_sha256'])
+                         sha256_file(assets_dir / 'marketing-initrd') == mkt_record['initrd_sha256'] and
+                         sha256_file(assets_dir / 'kernel') == mkt_record['kernel_sha256'])
             check_records, isolation_ok, cleanup_ok, overall = aggregate(
                 run, state, cleanup_record, limits_verified, inputs_ok, vm_exit)
-            server.shutdown(); server.server_close()
-            unix_server.shutdown(); unix_server.server_close()
+            if server is not None:
+                server.shutdown(); server.server_close()
+            if unix_server is not None:
+                unix_server.shutdown(); unix_server.server_close()
             unix_path.unlink(missing_ok=True)
             finished_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
             result = {'schema': 'relay.marketing-run-result.v1', 'run_id': run['run_id'], 'outcome': outcome,
@@ -448,6 +509,7 @@ def watch(run_dir_path, deadline_override=None):
             manifest_run.update({
                 'executor_version': executor_version,
                 'relay_commit_sha': relay_head.read_text().strip() if relay_head.exists() else '0' * 40,
+                'vm_kernel_digest': mkt_record['kernel_sha256'],
                 'started_at': started_at, 'finished_at': finished_at,
                 'check_records': check_records, 'overall_result': overall,
                 'cleanup_result': 'PASS' if cleanup_ok else 'FAIL',
@@ -471,10 +533,7 @@ def watch(run_dir_path, deadline_override=None):
                               'cleanup': 'PASS' if cleanup_ok else 'FAIL',
                               'checks': {r['name']: r['result'] for r in check_records}}))
         finally:
-            try:
-                lane_lock.close()
-            except BaseException:
-                pass
+            # The lane lock is closed by the outer watch() wrapper (single owner).
             signal.signal(signal.SIGTERM, old_handler)
     return outcome
 

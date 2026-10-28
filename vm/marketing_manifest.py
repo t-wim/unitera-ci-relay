@@ -16,7 +16,7 @@ REPOSITORY = 'baum777/unitera_marketing_agent-team'
 EXECUTION_PROFILE = 'marketing-python-vm-v1'
 TOP_LEVEL_KEYS = {'schema', 'run_id', 'repository', 'source_commit_sha', 'source_artifact_digest',
                   'source_inventory_digest', 'relay_commit_sha', 'executor_version',
-                  'vm_image_digest', 'python_runtime_sha256', 'python_version',
+                  'vm_image_digest', 'vm_kernel_digest', 'python_runtime_sha256', 'python_version',
                   'test_plan', 'toolchain_versions', 'execution_profile_name', 'profile',
                   'started_at', 'finished_at', 'checks', 'overall_result', 'cleanup_result',
                   'isolation_result', 'evidence'}
@@ -50,7 +50,7 @@ def validate_manifest(manifest):
         if not re.fullmatch(r'[0-9a-f]{40}', manifest[field]):
             raise ValueError(field + ' must be a 40-hex sha')
     for field in ('source_artifact_digest', 'source_inventory_digest', 'vm_image_digest',
-                  'python_runtime_sha256'):
+                  'vm_kernel_digest', 'python_runtime_sha256'):
         if not re.fullmatch(r'[0-9a-f]{64}', manifest[field]):
             raise ValueError(field + ' must be a 64-hex digest')
     if not isinstance(manifest['executor_version'], dict):
@@ -120,6 +120,7 @@ def build_manifest(run):
                 'relay_commit_sha': run['relay_commit_sha'],
                 'executor_version': run['executor_version'],
                 'vm_image_digest': run['vm_image_digest'],
+                'vm_kernel_digest': run['vm_kernel_digest'],
                 'python_runtime_sha256': run['python_runtime_sha256'],
                 'python_version': run['python_version'],
                 'test_plan': run['plan_name'],

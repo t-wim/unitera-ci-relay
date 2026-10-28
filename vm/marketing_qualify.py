@@ -32,7 +32,9 @@ import marketing_monitor
 import marketing_verify
 from ci_util import sha256_file
 from marketing_vm_contract import ISOLATION_CHECKS
-from marketing_vm_qualification import evaluate, implementation_digests
+from marketing_vm_qualification import (append_qualification_entry, evaluate,
+                                        implementation_digests,
+                                        qualification_ledger_path)
 from paths import private_path
 
 VM_ROOT = Path(__file__).resolve().parent
@@ -142,25 +144,39 @@ def _cleanup_view(cleanup, canaries_absent, limits_verified):
 
 def _run_vm(relay_root, private, case):
     validated_relay_root(relay_root)
-    run = marketing_monitor.launch(private, case['plan'], case['mode'],
-                                   case.get('abort_delay_s'),
-                                   guest_mode=case.get('guest_mode'))
-    run_dir = validated_run_dir(private, run['run_dir'])
+    # Exclusive lane lock BEFORE the launcher starts: the lock serializes VM
+    # execution, not just monitoring (finding: one-VM lane limit enforcement).
+    lane_lock = marketing_monitor.acquire_lane_lock(private)
+    try:
+        run = marketing_monitor.launch(private, case['plan'], case['mode'],
+                                       case.get('abort_delay_s'),
+                                       guest_mode=case.get('guest_mode'))
+        run_dir = validated_run_dir(private, run['run_dir'])
 
-    def reap():
-        # The only child process: this checkout's own mechanical launcher script,
-        # executed exactly as its #!/bin/sh shebang would; its exit code is the
-        # authoritative VM exit code.
-        console_handle = (run_dir / 'console.log').open('wb')
-        launch = subprocess.run(['/bin/sh', str(START_SCRIPT), str(run_dir)],
-                                stdout=console_handle, stderr=subprocess.STDOUT)
-        console_handle.close()
-        (run_dir / 'vm-exit.rc').write_text(str(launch.returncode) + '\n')
+        def reap():
+            # The only child process: this checkout's own mechanical launcher script,
+            # executed exactly as its #!/bin/sh shebang would; its exit code is the
+            # authoritative VM exit code.
+            console_handle = (run_dir / 'console.log').open('wb')
+            launch = subprocess.run(['/bin/sh', str(START_SCRIPT), str(run_dir)],
+                                    stdout=console_handle, stderr=subprocess.STDOUT)
+            console_handle.close()
+            (run_dir / 'vm-exit.rc').write_text(str(launch.returncode) + '\n')
 
-    reaper = threading.Thread(target=reap, daemon=True)
-    reaper.start()
-    marketing_monitor.watch(run_dir)
-    reaper.join(timeout=180)
+        reaper = threading.Thread(target=reap, daemon=True)
+        reaper.start()
+        marketing_monitor.watch(run_dir, lane_lock=lane_lock)
+        lane_lock = None  # ownership handed to watch(); it closed the lock
+    finally:
+        try:
+            if lane_lock is not None:
+                lane_lock.close()
+        except OSError:
+            pass
+        try:
+            reaper.join(timeout=180)
+        except UnboundLocalError:
+            pass
     result = json.loads((run_dir / 'evidence' / 'result.json').read_text())
     return run, run_dir, result
 
@@ -265,10 +281,6 @@ def qualify(relay_root, private, source_sha):
                            capture_output=True, text=True).stdout.strip()
     if dirty:
         raise ValueError('vm/ implementation has uncommitted changes; commit before qualifying')
-    binding = {'relay_commit_sha': relay_sha, 'host_observation': True,
-               'host': 't-wim self-hosted runner host (live QEMU/KVM lane)',
-               'executor_digests': implementation_digests(VM_ROOT),
-               'observed_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
     receipts = []
     prior_run_ids = set()
     for case in CASES:
@@ -290,18 +302,37 @@ def qualify(relay_root, private, source_sha):
         if not accepted:
             break
     if len(receipts) == len(CASES):
-        verdict = evaluate(_case_run_dirs(private, receipts), source_sha, relay_sha, binding)
+        # Controller evidence: chained ledger entry binding the five live runs,
+        # the exact commits, the current implementation digests and each case's
+        # evidence manifest digest. Only then may the gate qualify.
+        case_dirs = _case_run_dirs(private, receipts)
+        record = {
+            'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'relay_commit_sha': relay_sha, 'source_sha': source_sha,
+            'run_ids': [receipt['run_id'] for receipt in receipts],
+            'executor_digests': implementation_digests(VM_ROOT),
+            'case_manifest_digests': {
+                receipt['run_id']: sha256_file(Path(directory) / 'evidence' / 'manifest.json')
+                for receipt, directory in zip(receipts, case_dirs)},
+        }
+        entry_index = append_qualification_entry(private, record)
+        controller_evidence = {'ledger_path': str(qualification_ledger_path(private))}
+        verdict = evaluate(case_dirs, source_sha, relay_sha, controller_evidence)
     else:
+        controller_evidence = None
+        entry_index = None
         verdict = {'schema': 'relay.marketing-vm-qualification.v1', 'qualified': False,
                    'evidence_consistent': False,
                    'errors': ['qualification stopped early: only %d cases completed'
                               % len(receipts)]}
-    record = {'schema': 'relay.marketing-vm-qualification-record.v1',
-              'source_sha': source_sha, 'relay_sha': relay_sha, 'host_binding': binding,
-              'cases': receipts, 'verdict': verdict,
-              'VM_ISOLATION_QUALIFIED': bool(verdict.get('qualified'))}
-    (private / 'qualification.json').write_text(json.dumps(record, indent=2) + '\n')
-    return record
+    record_out = {'schema': 'relay.marketing-vm-qualification-record.v1',
+                  'source_sha': source_sha, 'relay_sha': relay_sha,
+                  'controller_evidence': controller_evidence,
+                  'qualification_ledger_entry': entry_index,
+                  'cases': receipts, 'verdict': verdict,
+                  'VM_ISOLATION_QUALIFIED': bool(verdict.get('qualified'))}
+    (private / 'qualification.json').write_text(json.dumps(record_out, indent=2) + '\n')
+    return record_out
 
 
 def _case_run_dirs(private, receipts):

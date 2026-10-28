@@ -103,6 +103,7 @@ def finalize(private, commit):
                                    'python_bin_sha256': image['python_bin_sha256'],
                                    'runtime_file_count': image['runtime_file_count'],
                                    'initrd_sha256': image['initrd_sha256'],
+                                   'kernel_sha256': image['kernel_sha256'],
                                    'toolchain_manifest_sha256': image['toolchain_manifest_sha256']},
                 'workspace_image': image_record}
     (assets / 'marketing-prep-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')

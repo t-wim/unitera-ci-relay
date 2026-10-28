@@ -178,6 +178,11 @@ def reasons_from(run_dir, expect_plan=None, prep_manifest=None):
             problems.append('python runtime digest not bound to prep manifest')
         if manifest['vm_image_digest'] != prep['python_runtime']['initrd_sha256']:
             problems.append('guest image digest not bound to prep manifest')
+        kernel_bound = prep['python_runtime'].get('kernel_sha256')
+        if kernel_bound and manifest['vm_kernel_digest'] != kernel_bound:
+            problems.append('guest kernel digest not bound to prep manifest')
+    if run.get('vm_kernel_digest') and manifest['vm_kernel_digest'] != run['vm_kernel_digest']:
+        problems.append('guest kernel digest differs between run.json and manifest')
     return manifest, problems
 
 
@@ -185,20 +190,49 @@ def ledger_path(private):
     return Path(private) / 'marketing-run-ledger.json'
 
 
+def _locked_ledger_write(path, mutate, new_ledger):
+    """Serialize the read-modify-write cycle with an flock on a dedicated lock
+    file and publish the new ledger atomically (os.replace), so concurrent
+    verifiers can never lose each other's entries (finding: replay-ledger race)."""
+    import fcntl
+    import os
+    import tempfile
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_handle = (path.parent / (path.name + '.lock')).open('a')
+    try:
+        fcntl.flock(lock_handle, fcntl.LOCK_EX)
+        ledger = json.loads(path.read_text()) if path.exists() else dict(new_ledger)
+        result = mutate(ledger)
+        if path.exists():
+            handle = tempfile.NamedTemporaryFile('w', dir=str(path.parent), delete=False)
+            try:
+                json.dump(ledger, handle, indent=2)
+                handle.write('\n')
+                handle.flush()
+                os.fsync(handle.fileno())
+                os.replace(handle.name, str(path))
+            finally:
+                if os.path.exists(handle.name):
+                    os.unlink(handle.name)
+        else:
+            path.write_text(json.dumps(ledger, indent=2) + '\n')
+        return result
+    finally:
+        lock_handle.close()
+
+
 def ledger_append(private, run_id, manifest_digest):
     path = ledger_path(private)
-    if path.exists():
-        ledger = json.loads(path.read_text())
-    else:
-        ledger = {'schema': LEDGER_SCHEMA, 'runs': {}}
-    if ledger.get('schema') != LEDGER_SCHEMA:
-        raise ValueError('ledger schema mismatch')
-    if run_id in ledger['runs']:
-        raise ValueError('REPLAY_REJECTED: run_id already in ledger: ' + run_id)
-    ledger['runs'][run_id] = {'manifest_sha256': manifest_digest}
-    ledger['collisions'] = ledger.get('collisions', 0)
-    path.write_text(json.dumps(ledger, indent=2) + '\n')
-    return True
+
+    def mutate(ledger):
+        if ledger.get('schema') != LEDGER_SCHEMA:
+            raise ValueError('ledger schema mismatch')
+        if run_id in ledger['runs']:
+            raise ValueError('REPLAY_REJECTED: run_id already in ledger: ' + run_id)
+        ledger['runs'][run_id] = {'manifest_sha256': manifest_digest}
+        return True
+
+    return _locked_ledger_write(path, mutate, {'schema': LEDGER_SCHEMA, 'runs': {}})
 
 
 def verify(run_dir, private, expect_plan=None, prep_manifest=None, append=False):

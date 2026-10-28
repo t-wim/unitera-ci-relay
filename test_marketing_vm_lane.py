@@ -24,10 +24,11 @@ from marketing_image import _runtime_files
 from marketing_monitor import verify_prepared
 from marketing_status_writeback import readback, send
 from marketing_vm_contract import ISOLATION_CHECKS, verify_receipt
-from marketing_vm_qualification import evaluate, host_binding_valid
+from marketing_vm_qualification import evaluate
 
 SOURCE = "1" * 40
 RELAY = "2" * 40
+KERNEL = "7" * 64
 
 
 def _write(path, data):
@@ -49,7 +50,8 @@ def build_evidence(root, *, plan_name="production", outcome="exited", vm_exit=33
     run = {"run_id": "a" * 32, "expected_checks": sorted(expected),
            "plan_name": plan_name, "source_commit_sha": SOURCE,
            "source_artifact_digest": "3" * 64, "source_inventory_digest": "4" * 64,
-           "vm_image_digest": "5" * 64, "python_runtime_sha256": "6" * 64,
+           "vm_image_digest": "5" * 64, "vm_kernel_digest": KERNEL,
+           "python_runtime_sha256": "6" * 64,
            "python_version": "3.14.4", "toolchain_versions": {"python": "3.14.4"},
            "relay_commit_sha": RELAY, "executor_version": {"m": "7" * 64},
            "profile": {"guest_mib": 1024, "deadline_s": 1800}, "mode": "run"}
@@ -114,7 +116,8 @@ def build_evidence(root, *, plan_name="production", outcome="exited", vm_exit=33
         "repository": marketing_manifest.REPOSITORY, "source_commit_sha": SOURCE,
         "source_artifact_digest": "3" * 64, "source_inventory_digest": "4" * 64,
         "relay_commit_sha": RELAY, "executor_version": {"m": "7" * 64},
-        "vm_image_digest": "5" * 64, "python_runtime_sha256": "6" * 64,
+        "vm_image_digest": "5" * 64, "vm_kernel_digest": KERNEL,
+        "python_runtime_sha256": "6" * 64,
         "python_version": "3.14.4", "test_plan": plan_name,
         "toolchain_versions": {"python": "3.14.4"},
         "execution_profile_name": marketing_manifest.EXECUTION_PROFILE,
@@ -148,6 +151,7 @@ PREP = {
                "inventory_sha256": "4" * 64, "source_bytes": 123},
     "python_runtime": {"version": "3.14.4", "python_bin_sha256": "6" * 64,
                        "runtime_file_count": 700, "initrd_sha256": "5" * 64,
+                       "kernel_sha256": KERNEL,
                        "toolchain_manifest_sha256": "9" * 64},
     "workspace_image": {"bytes": 1, "sha256": "b" * 64, "label": "UNITERA_MKT_WS",
                         "content": {}}}
@@ -186,7 +190,7 @@ class ManifestSchemaTests(unittest.TestCase):
                 "repository": marketing_manifest.REPOSITORY, "source_commit_sha": SOURCE,
                 "source_artifact_digest": "3" * 64, "source_inventory_digest": "4" * 64,
                 "relay_commit_sha": RELAY, "executor_version": {}, "vm_image_digest": "5" * 64,
-                "python_runtime_sha256": "6" * 64, "python_version": "3.14.4",
+                "vm_kernel_digest": KERNEL, "python_runtime_sha256": "6" * 64, "python_version": "3.14.4",
                 "test_plan": "production", "toolchain_versions": {"python": "3.14.4"},
                 "execution_profile_name": marketing_manifest.EXECUTION_PROFILE,
                 "profile": {"guest_mib": 1024}, "started_at": "2026-10-28T12:00:00+00:00",
@@ -365,29 +369,33 @@ class ReceiptPlanBindingTests(unittest.TestCase):
             _receipt, issues = verify_receipt(stubbed, SOURCE, RELAY)
             self.assertTrue(any("invalid command/exit" in i for i in issues))
 
-    def test_python_digest_and_stdlib_tamper_fail_image_checks(self):
-        # A manipulated standard library or missing binary digest must break the
-        # prepared-asset binding before any launch (lock re-verification).
+    def test_python_digest_kernel_and_stdlib_tamper_fail_image_checks(self):
+        # A manipulated standard library, missing python binary digest or a
+        # substituted guest kernel must break the prepared-asset binding before
+        # any launch (lock re-verification, finding 1).
         with tempfile.TemporaryDirectory() as tmp:
             assets = Path(tmp) / "assets"
             assets.mkdir(parents=True)
             (assets / "ws-base.img").write_bytes(b"img")
+            (assets / "kernel").write_bytes(b"kernel-bytes")
             _write(assets / "ws-image.json",
                    {"bytes": 3, "sha256": sha256_file(assets / "ws-base.img"),
                     "label": "L", "content": {}})
             (assets / "marketing-initrd").write_bytes(b"initrd")
             image = {"schema": "relay.marketing-image.v1",
                      "initrd_sha256": sha256_file(assets / "marketing-initrd"),
-                     "guest_init_sha256": "0" * 64, "kernel_sha256": "0" * 64,
+                     "guest_init_sha256": "0" * 64,
+                     "kernel_sha256": sha256_file(assets / "kernel"),
                      "base_initrd_sha256": "0" * 64, "python_version": "3.14.4",
                      "python_bin_sha256": "6" * 64, "runtime_file_count": 700,
                      "entry_count": 900, "toolchain_manifest_sha256": "9" * 64}
             _write(assets / "marketing-image.json", image)
             prep = dict(PREP, workspace_image=json.loads((assets / "ws-image.json").read_text()))
             prep["python_runtime"] = dict(PREP["python_runtime"],
-                                          initrd_sha256=image["initrd_sha256"])
+                                          initrd_sha256=image["initrd_sha256"],
+                                          kernel_sha256=image["kernel_sha256"])
             _write(assets / "marketing-prep-manifest.json", prep)
-            verify_prepared(assets)  # clean binding passes
+            verify_prepared(assets)  # clean three-way binding passes
             tampered = dict(prep, python_runtime=dict(prep["python_runtime"],
                                                       python_bin_sha256="e" * 64))
             _write(assets / "marketing-prep-manifest.json", tampered)
@@ -395,6 +403,17 @@ class ReceiptPlanBindingTests(unittest.TestCase):
                 verify_prepared(assets)
             (assets / "marketing-initrd").write_bytes(b"manipulated-stdlib")
             _write(assets / "marketing-prep-manifest.json", prep)
+            with self.assertRaises(ValueError):
+                verify_prepared(assets)
+            (assets / "marketing-initrd").write_bytes(b"initrd")
+            (assets / "kernel").write_bytes(b"substituted-kernel")
+            with self.assertRaises(ValueError):
+                verify_prepared(assets)
+            (assets / "kernel").write_bytes(b"kernel-bytes")
+            unbound = dict(prep, python_runtime={
+                key: value for key, value in prep["python_runtime"].items()
+                if key != "kernel_sha256"})
+            _write(assets / "marketing-prep-manifest.json", unbound)
             with self.assertRaises(ValueError):
                 verify_prepared(assets)
 
@@ -413,32 +432,286 @@ class ReceiptPlanBindingTests(unittest.TestCase):
 
 
 class QualificationGateTests(unittest.TestCase):
-    def test_consistent_receipts_without_host_binding_stay_unqualified(self):
+    def fixture_cases(self, tmp):
+        sys.path.insert(0, str(Path(__file__).parent / "vm"))
+        import test_marketing_vm_candidate as candidate
+        paths = []
+        outcomes = ("success", "failure", "timeout", "cancel", "success")
+        for index, outcome in enumerate(outcomes, 1):
+            case = Path(tmp) / str(index)
+            candidate.fixture(case, outcome=outcome, run_id=str(index) * 32)
+            data = json.loads((case / "receipt.json").read_text())
+            data["vm_exit_code"] = {"success": 33, "failure": 35,
+                                    "timeout": 35, "cancel": None}[outcome]
+            data["terminated_while_running"] = outcome in ("timeout", "cancel")
+            _write(case / "receipt.json", data)
+            paths.append(case)
+        return candidate, paths
+
+    def test_consistent_receipts_without_controller_evidence_stay_unqualified(self):
         with tempfile.TemporaryDirectory() as tmp:
-            sys.path.insert(0, str(Path(__file__).parent / "vm"))
-            import test_marketing_vm_candidate as candidate
-            paths = []
-            outcomes = ("success", "failure", "timeout", "cancel", "success")
-            for index, outcome in enumerate(outcomes, 1):
-                case = Path(tmp) / str(index)
-                candidate.fixture(case, outcome=outcome, run_id=str(index) * 32)
-                data = json.loads((case / "receipt.json").read_text())
-                data["vm_exit_code"] = {"success": 33, "failure": 35,
-                                        "timeout": 35, "cancel": None}[outcome]
-                data["terminated_while_running"] = outcome in ("timeout", "cancel")
-                _write(case / "receipt.json", data)
-                paths.append(case)
+            candidate, paths = self.fixture_cases(tmp)
             result = evaluate(paths, candidate.SOURCE, candidate.RELAY)
             self.assertFalse(result["qualified"])
             self.assertTrue(result["evidence_consistent"])
-            binding = {"relay_commit_sha": candidate.RELAY, "host_observation": True,
-                       "executor_digests": {"wrong.py": "0" * 64}}
-            self.assertFalse(evaluate(paths, candidate.SOURCE, candidate.RELAY, binding)["qualified"])
+            self.assertEqual(result["blocker"], "CONTROLLER_EVIDENCE_LEDGER_REQUIRED")
 
-    def test_host_binding_requires_exact_implementation_digests(self):
-        ok, _error = host_binding_valid({"relay_commit_sha": RELAY, "host_observation": True,
-                                         "executor_digests": {}}, RELAY)
-        self.assertFalse(ok)
+    def test_self_declared_json_flag_cannot_qualify(self):
+        # Exact Codex-review reproduction: synthetic fixture receipts plus a
+        # self-declared binding (host_observation flag / crafted dict) must not
+        # reach qualified=true any more (finding 2).
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate, paths = self.fixture_cases(tmp)
+            from marketing_vm_qualification import implementation_digests
+            for evidence in (
+                    None,
+                    {"relay_commit_sha": candidate.RELAY, "host_observation": True,
+                     "executor_digests": implementation_digests()},
+                    {"ledger_path": str(Path(tmp) / "does-not-exist.json")}):
+                result = evaluate(paths, candidate.SOURCE, candidate.RELAY, evidence)
+                self.assertFalse(result["qualified"], repr(evidence))
+
+    def test_forged_qualification_ledger_cannot_qualify(self):
+        # Even a perfectly chained, self-computed ledger entry cannot qualify
+        # synthetic receipts: the case dirs carry no evidence manifests and the
+        # full independent re-verification would fail (finding 2).
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate, paths = self.fixture_cases(tmp)
+            from marketing_vm_qualification import (append_qualification_entry,
+                                                    qualification_ledger_path)
+            private = Path(tmp) / "private"
+            private.mkdir()
+            append_qualification_entry(private, {
+                "relay_commit_sha": candidate.RELAY, "source_sha": candidate.SOURCE,
+                "run_ids": [str(i) * 32 for i in range(1, 6)],
+                "executor_digests": implementation_digests_of_current(),
+                "case_manifest_digests": {}})
+            result = evaluate(paths, candidate.SOURCE, candidate.RELAY,
+                              {"ledger_path": str(qualification_ledger_path(private))})
+            self.assertFalse(result["qualified"])
+            ledger = json.loads(qualification_ledger_path(private).read_text())
+            ledger["entries"][0]["record"]["run_ids"] = [str(i) * 32 for i in range(1, 6)]
+            ledger["entries"][0]["record"]["executor_digests"] = {"other.py": "0" * 64}
+            _write(qualification_ledger_path(private), ledger)
+            result = evaluate(paths, candidate.SOURCE, candidate.RELAY,
+                              {"ledger_path": str(qualification_ledger_path(private))})
+            self.assertFalse(result["qualified"])
+            ledger["entries"][0]["entry_sha256"] = "f" * 64
+            _write(qualification_ledger_path(private), ledger)
+            from marketing_vm_qualification import verify_qualification_ledger
+            _entry, error = verify_qualification_ledger(
+                qualification_ledger_path(private),
+                {"source_sha": candidate.SOURCE, "relay_sha": candidate.RELAY,
+                 "run_ids": [], "executor_digests": {}})
+            self.assertIsNotNone(error)
+
+
+def implementation_digests_of_current():
+    from marketing_vm_qualification import implementation_digests
+    return implementation_digests()
+
+
+class _StubResult:
+    def __init__(self, returncode=0, stdout=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = ""
+
+
+class StubLane:
+    """Minimal lane stub: records systemctl/cleanup calls, no real systemd."""
+    calls = []
+
+    @staticmethod
+    def systemctl(*args):
+        StubLane.calls.append(tuple(args))
+        return _StubResult(stdout="not-found\n")
+
+    @staticmethod
+    def scope_pids(unit):
+        return []
+
+    @staticmethod
+    def scope_metrics(unit):
+        return {}
+
+    @staticmethod
+    def cleanup(unit, owned_scope, proc, observed_pids, job, evidence, log):
+        StubLane.calls.append(("cleanup", unit))
+        (Path(evidence) / "console.log").write_bytes(log)
+        return {"cleanup_errors": [], "final_scope_load_state": "not-found",
+                "observed_pids_still_exist": [], "scope_remaining_pids": [],
+                "job_directory_removed": True, "cleanup_verified": True}
+
+
+class SecurityClosureTests(unittest.TestCase):
+    """One reproducible negative test per Codex review finding on PR #8."""
+
+    @staticmethod
+    def build_assets(root):
+        """Consistent prepared-asset tree (workspace image, kernel, initrd, records)."""
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "ws-base.img").write_bytes(b"img")
+        (root / "kernel").write_bytes(b"kernel-bytes")
+        (root / "marketing-initrd").write_bytes(b"initrd")
+        _write(root / "ws-image.json",
+               {"bytes": 3, "sha256": sha256_file(root / "ws-base.img"),
+                "label": "L", "content": {}})
+        image = {"schema": "relay.marketing-image.v1",
+                 "initrd_sha256": sha256_file(root / "marketing-initrd"),
+                 "guest_init_sha256": "0" * 64,
+                 "kernel_sha256": sha256_file(root / "kernel"),
+                 "base_initrd_sha256": "0" * 64, "python_version": "3.14.4",
+                 "python_bin_sha256": "6" * 64, "runtime_file_count": 700,
+                 "entry_count": 900, "toolchain_manifest_sha256": "9" * 64}
+        _write(root / "marketing-image.json", image)
+        prep = dict(PREP, workspace_image=json.loads((root / "ws-image.json").read_text()))
+        prep["python_runtime"] = dict(PREP["python_runtime"],
+                                      initrd_sha256=image["initrd_sha256"],
+                                      kernel_sha256=image["kernel_sha256"])
+        _write(root / "marketing-prep-manifest.json", prep)
+        return root
+
+    def build_run_fixture(self, private, port):
+        run_dir = private / "runs" / ("a" * 32)
+        (run_dir / "evidence").mkdir(parents=True)
+        expected = marketing_plan.expected_check_set("production") | set(ISOLATION_CHECKS)
+        _write(run_dir / "run.json", {
+            "run_id": "a" * 32, "expected_checks": sorted(expected),
+            "plan_name": "production", "source_commit_sha": SOURCE,
+            "unit": "unitera-marketing-vm-test.scope", "mode": "run",
+            "vm_kernel_digest": KERNEL, "vm_image_digest": "5" * 64,
+            "toolchain_versions": {"python": "3.14.4"},
+            "source_artifact_digest": "3" * 64, "source_inventory_digest": "4" * 64,
+            "python_runtime_sha256": "6" * 64, "python_version": "3.14.4",
+            "executor_version": {}, "relay_commit_sha": RELAY,
+            "_config": {"HOST_PORT": str(port), "LAN_PROBE": "192.0.2.10",
+                        "SOCKET_CANARY_PATH": str(private / "s.sock")},
+            "profile": {"guest_mib": 1024, "deadline_s": 5, "mem_floor_mib": 1280,
+                        "scope_memory_max": "1408M", "cpu_quota_percent": 100,
+                        "tasks_max": 256, "console_budget_bytes": 1048576}})
+        return run_dir
+
+    def test_finding_3_preflight_failure_tears_down_launched_scope(self):
+        import marketing_monitor
+        from unittest import mock
+        occupier = __import__("socket").socket(__import__("socket").AF_INET,
+                                                __import__("socket").SOCK_STREAM)
+        occupier.bind(("127.0.0.1", 0))
+        occupier.listen(1)
+        port = occupier.getsockname()[1]
+        StubLane.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp) / "private"
+            private.mkdir()
+            assets_dir = self.build_assets(private / "marketing-assets")
+            run_dir = self.build_run_fixture(private, port)
+            saved_lane = sys.modules.get("lane")
+            sys.modules["lane"] = StubLane
+            try:
+                with mock.patch.object(marketing_monitor, "private_path",
+                                       side_effect=lambda value: Path(value)):
+                    with mock.patch.object(marketing_monitor, "assets",
+                                           side_effect=lambda _private: assets_dir):
+                        outcome = marketing_monitor.watch(run_dir)
+            finally:
+                if saved_lane is not None:
+                    sys.modules["lane"] = saved_lane
+                else:
+                    sys.modules.pop("lane", None)
+            result = json.loads((run_dir / "evidence" / "result.json").read_text())
+            self.assertIn(result["outcome"], ("controller_error:OSError", "exited"))
+            self.assertNotEqual(result["outcome"], "exited")
+            self.assertIn(("kill", "--signal=SIGKILL", "unitera-marketing-vm-test.scope"),
+                          StubLane.calls)
+            self.assertIn(("cleanup", "unitera-marketing-vm-test.scope"), StubLane.calls)
+            occupier.close()
+
+    def test_finding_4_lane_lock_is_exclusive_and_handed_to_watch(self):
+        import marketing_monitor
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(marketing_monitor, "private_path",
+                                   side_effect=lambda value: Path(value)):
+                lock = marketing_monitor.acquire_lane_lock(Path(tmp))
+                try:
+                    second = None
+                    try:
+                        second = marketing_monitor.acquire_lane_lock(Path(tmp))
+                    except RuntimeError as exc:
+                        self.assertIn("BLOCKED_LANE_LOCK", str(exc))
+                    finally:
+                        if second is not None:
+                            second.close()
+                            self.fail("lane lock was not exclusive")
+                    captured = {}
+                    def fake_locked(run_dir, deadline, lane_lock):
+                        captured["lock"] = lane_lock
+                        return "exited"
+                    with mock.patch.object(marketing_monitor, "_watch_locked",
+                                           side_effect=fake_locked):
+                        result = marketing_monitor.watch("/nowhere", lane_lock=lock)
+                    self.assertEqual(result, "exited")
+                    self.assertIs(captured["lock"], lock)
+                finally:
+                    try:
+                        lock.close()
+                    except OSError:
+                        pass
+
+    def test_finding_5_resource_gate_scales_with_requested_guest_mib(self):
+        import marketing_monitor
+        profile = marketing_monitor.scaled_resource_profile(2048)
+        self.assertEqual(profile["mem_min_mib"], 3584)
+        self.assertEqual(profile["mem_floor_mib"], 1792)
+        low_meminfo = "MemAvailable: %d kB\n" % (3000 * 1024)
+        with self.assertRaises(RuntimeError):
+            marketing_monitor.budget_check(profile, meminfo_text=low_meminfo, free_bytes=10**11)
+        default = marketing_monitor.scaled_resource_profile(1024)
+        marketing_monitor.budget_check(default, meminfo_text=low_meminfo, free_bytes=10**11)
+        with self.assertRaises(ValueError):
+            marketing_monitor.scaled_resource_profile(8192)
+        with self.assertRaises(ValueError):
+            marketing_monitor.scaled_resource_profile(256)
+
+    def test_finding_6_concurrent_ledger_appends_are_never_lost(self):
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            errors = []
+
+            def append(index):
+                try:
+                    marketing_verify.ledger_append(tmp, "%032d" % index, "%064d" % index)
+                except ValueError as exc:
+                    errors.append(str(exc))
+
+            threads = [threading.Thread(target=append, args=(i,)) for i in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(errors, [])
+            ledger = json.loads(marketing_verify.ledger_path(tmp).read_text())
+            self.assertEqual(len(ledger["runs"]), 8)
+            with self.assertRaises(ValueError):
+                marketing_verify.ledger_append(tmp, "%032d" % 3, "0" * 64)
+
+    def test_finding_7_full_cgroup_readback_required(self):
+        import marketing_monitor
+        profile = {"scope_memory_max": "1408M", "cpu_quota_percent": 100, "tasks_max": 256}
+        good = {"memory.max": str(1408 * 1024 * 1024), "memory.swap.max": "0",
+                "cpu.max": "100000 100000", "pids.max": "256"}
+        self.assertTrue(marketing_monitor.limits_match(good, profile))
+        for mutation in ({"cpu.max": "200000 100000"}, {"pids.max": "512"},
+                         {"memory.swap.max": "1048576"}, {"cpu.max": None},
+                         {"pids.max": None}):
+            bad = dict(good)
+            key = next(iter(mutation))
+            if mutation[key] is None:
+                bad.pop(key)
+            else:
+                bad[key] = mutation[key]
+            self.assertFalse(marketing_monitor.limits_match(bad, profile), repr(mutation))
 
 
 class StatusReadbackTests(unittest.TestCase):
