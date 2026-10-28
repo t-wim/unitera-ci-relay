@@ -446,7 +446,15 @@ class VerifierTests(unittest.TestCase):
                     'isolation_result': 'FAIL' if isolation_fail else 'PASS',
                     'evidence': {}}
         (run_dir / 'evidence' / 'manifest.json').write_text(json.dumps(manifest))
-        result_json = {'overall_result': overall}
+        # Realistic raw result record: the independent verifier cross-checks these
+        # fields instead of trusting the manifest's PASS summary.
+        result_json = {'overall_result': overall, 'outcome': 'exited',
+                       'vm_exit': 33 if overall == 'PASS' else 35,
+                       'limits_verified': True, 'inputs_unchanged': True,
+                       'host_service_positive_controls': {'127.0.0.1': True, 'lan': True,
+                                                          'synthetic_unix_socket': True},
+                       'cleanup': {'cleanup_verified': True, 'scope_remaining_pids': [],
+                                   'observed_pids_still_exist': []}}
         (run_dir / 'evidence' / 'result.json').write_text(json.dumps(result_json))
         (run_dir / 'evidence' / 'console.log').write_text(console)
         run = {'run_id': 'a' * 32, 'expected_checks': expected}

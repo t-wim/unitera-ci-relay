@@ -39,7 +39,10 @@ ISOLATION_CHECKS = ['live_virtual_link', 'protected_host_canary', 'review_canary
                     'synthetic_file_created']
 PROTOCOL_NAME = re.compile(r'[a-z0-9][a-z0-9_-]*')
 CONFIG_KEYS = {'MODE', 'HOST_PORT', 'LAN_PROBE', 'HOST_CANARY_PATH', 'REVIEW_CANARY_PATH',
-               'STATUS_CANARY_PATH', 'DOCKER_CANARY_PATH', 'EXPECTED_FILE_COUNT', 'NODE_VERSION'}
+               'STATUS_CANARY_PATH', 'DOCKER_CANARY_PATH', 'EXPECTED_FILE_COUNT', 'NODE_VERSION',
+               'EXPECTED_TREE_SHA', 'EXPECTED_SYMLINK_COUNT', 'EXPECTED_GITLINK_COUNT'}
+BAUM_REPOSITORY = 'baum777/baum-os'
+SYSTEMS_REPOSITORY = 'baum777/Unitera_Systems'
 
 
 def assets(private):
@@ -124,6 +127,14 @@ def append_job_overlay(initrd_path, config, plan):
         lines.append(key + '=' + shlex.quote(text))
     plan_text = ci_plan.serialize_plan(plan)
     data = {'ci-config': ('\n'.join(lines).encode(), 0o600), 'plan': (plan_text.encode(), 0o600)}
+    # Verbatim workflow run-step bodies travel as digest-bound script files under /plan;
+    # each entry's argv already pins exactly this path (ci_plan.validate_script_entries).
+    for entry in plan:
+        if entry.get('script') is not None:
+            script_path = entry['script_path']
+            if not re.fullmatch(r'/plan/[a-z0-9-]+\.yml/[a-z0-9_-]+/[0-9]+\.sh', script_path):
+                raise ValueError('plan script path rejected: ' + script_path)
+            data[script_path.lstrip('/')] = (entry['script'].encode(), 0o600)
     return initrd_path.read_bytes() + gzip.compress(cpio(data), mtime=0)
 
 
@@ -176,15 +187,22 @@ def launch(private, plan_name, mode, abort_delay_s=None, deadline_s=None, guest_
               'STATUS_CANARY_PATH': canaries['status'][0], 'DOCKER_CANARY_PATH': unix_path,
               'EXPECTED_FILE_COUNT': prep['source']['file_count'],
               'NODE_VERSION': prep['toolchain']['node']['version']}
+    repository = prep.get('repository', SYSTEMS_REPOSITORY)
+    if repository == BAUM_REPOSITORY:
+        config['EXPECTED_TREE_SHA'] = prep['source']['git_tree_sha']
+        config['EXPECTED_SYMLINK_COUNT'] = prep['source']['symlink_count']
+        config['EXPECTED_GITLINK_COUNT'] = prep['source']['gitlink_count']
     (job_dir / 'initrd').write_bytes(append_job_overlay(assets_dir / 'ci-initrd', config, plan))
     unit = 'unitera-source-ci-' + run_id + '.scope'
     write_args_file(run_dir / 'launch' / 'argv.args',
                     build_argv(assets_dir / 'kernel', assets_dir / 'ws-base.img', job_dir, unit, profile))
     (run_dir / 'launch' / 'overlay.txt').write_text(str(assets_dir / 'ws-base.img') + '\n' + str(job_dir / 'ws.qcow2') + '\n')
     run = {'run_id': run_id, 'run_dir': str(run_dir), 'unit': unit, 'mode': mode,
-           'abort_delay_s': abort_delay_s, 'profile': profile, 'plan_name': plan_name,
+           'abort_delay_s': abort_delay, 'profile': profile, 'plan_name': plan_name,
+           'repository': repository,
            '_config': {key: str(value) for key, value in config.items()},
            'source_commit_sha': prep['source']['commit'],
+           'git_tree_sha': prep['source'].get('git_tree_sha'),
            'source_artifact_digest': prep['source']['archive_sha256'],
            'vm_image_digest': ci_record['initrd_sha256'],
            'base_image_digest': image_record['sha256'],
@@ -474,7 +492,7 @@ def watch(run_dir_path, deadline_override=None):
                       'overall_result': overall, 'isolation_result': 'PASS' if isolation_ok else 'FAIL'}
             (run_dir / 'evidence' / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
             executor_files = ['ci_monitor.py', 'ci_guest.sh', 'ci_plan.py', 'ci_image.py',
-                              'ci_start.sh', 'ci_util.py', 'ci_prep.py']
+                              'ci_start.sh', 'ci_util.py', 'ci_prep.py', 'baum_prep.py']
             vm_root = Path(__file__).parent
             executor_version = {name: sha256_file(vm_root / name) for name in executor_files}
             relay_head = (run_dir / 'relay-head.txt')

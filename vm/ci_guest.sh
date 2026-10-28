@@ -78,6 +78,45 @@ sha256sum -c /toolchain.sha256 > /ws/work/c2.log 2>&1 || c2=1
 node_version=$(node --version 2>/dev/null)
 [ "$node_version" = "v$NODE_VERSION" ] || c2=1
 if [ "$c2" -eq 0 ]; then echo "CHECK c2_toolchain_validation PASS"; else echo "CHECK c2_toolchain_validation FAIL"; failures=$((failures+1)); fi
+if [ -n "$EXPECTED_TREE_SHA" ]; then
+  # baum-os profile: typed tree custody. The materialized work tree (regular files,
+  # exec bits, symlinks) is re-indexed with git inside this disposable guest; the
+  # gitlink entries are added from controller data; git write-tree must reproduce the
+  # exact commit tree SHA. Any content, mode, symlink or gitlink drift breaks the tree.
+  export npm_config_store_dir=/ws/store npm_config_offline=true npm_config_frozen_lockfile=true
+  export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TEMPLATE_DIR=/nonexistent
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=/ws/src
+  c1b=0
+  sl_seen=0
+  while IFS="$(printf '\t')" read -r sl_path sl_target; do
+    [ -n "$sl_path" ] || continue
+    sl_seen=$((sl_seen+1))
+    [ "$(readlink "/ws/src/$sl_path" 2>/dev/null)" = "$sl_target" ] || c1b=1
+  done < /symlinks.txt
+  [ "$sl_seen" -eq "$EXPECTED_SYMLINK_COUNT" ] || c1b=1
+  gl_seen=0
+  while IFS="$(printf '\t')" read -r gl_sha gl_path; do
+    [ -n "$gl_sha" ] || continue
+    gl_seen=$((gl_seen+1))
+  done < /gitlinks.txt
+  [ "$gl_seen" -eq "$EXPECTED_GITLINK_COUNT" ] || c1b=1
+  ( cd /ws/src && git init -q . && git add -A -f . && \
+    while IFS="$(printf '\t')" read -r gl_sha gl_path; do
+      [ -n "$gl_sha" ] || continue
+      git update-index --add --cacheinfo 160000,"$gl_sha","$gl_path" || exit 1
+    done < /gitlinks.txt && git write-tree ) > /ws/work/c1b.log 2>&1
+  c1b_rc=$?
+  c1b_tree=$(tail -n 1 /ws/work/c1b.log 2>/dev/null)
+  { [ "$c1b_rc" -eq 0 ] && [ "$c1b_tree" = "$EXPECTED_TREE_SHA" ]; } || c1b=1
+  if [ "$c1b" -eq 0 ]; then
+    echo "CHECK c1b_git_tree_identity PASS"
+  else
+    echo "CHECK c1b_git_tree_identity FAIL"
+    echo "DIAG c1b_tree $c1b_tree expected $EXPECTED_TREE_SHA"
+    tail -c 2048 /ws/work/c1b.log 2>/dev/null | sed 's/^/DIAG c1b /'
+    failures=$((failures+1))
+  fi
+fi
 echo SRC_READY
 if [ "$MODE" = hold ]; then
   while :; do sleep 5; done

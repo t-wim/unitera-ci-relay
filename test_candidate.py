@@ -19,8 +19,17 @@ def trigger_inputs(workflow):
 
 
 class QuarantineTests(unittest.TestCase):
+    # The two executor admission entrypoints; the separately-published
+    # marketing admission-only workflow is covered by its own test below.
+    QUARANTINE_WORKFLOWS = ('unitera-ci-relay.yml', 'unitera-relay-preflight.yml')
+
     def workflows(self):
-        return [yaml.safe_load(p.read_text()) for p in sorted((ROOT / '.github/workflows').glob('*.yml'))]
+        return [yaml.safe_load((ROOT / '.github/workflows' / name).read_text())
+                for name in self.QUARANTINE_WORKFLOWS]
+
+    def other_workflows(self):
+        return [yaml.safe_load(p.read_text()) for p in sorted((ROOT / '.github/workflows').glob('*.yml'))
+                if p.name not in self.QUARANTINE_WORKFLOWS]
 
     def systems_workflows(self):
         return [w for w in self.workflows() if 'isolation-blocked' in w.get('jobs', {})]
@@ -48,6 +57,24 @@ class QuarantineTests(unittest.TestCase):
             for job in workflow['jobs'].values():
                 self.assertNotIn('continue-on-error', job)
                 self.assertEqual(job['permissions'], {})
+                self.assertEqual(job['runs-on'], ['self-hosted', 'Linux', 'X64', 'unitera-ci', 'relay'])
+                for step in job['steps']:
+                    for key in ['uses', 'continue-on-error', 'if']:
+                        self.assertNotIn(key, step)
+                    self.assertNotIn('secrets.', json.dumps(step))
+                    self.assertNotIn('vars.', json.dumps(step))
+                    self.assertNotRegex(step['run'], r'(?m)^\s*(git|docker|pnpm|curl|sudo|ssh|eval|source)\s')
+
+    def test_additional_workflows_stay_admission_only_without_source_or_credentials(self):
+        others = self.other_workflows()
+        self.assertTrue(others, 'expected the marketing admission-only workflow')
+        for workflow in others:
+            self.assertEqual(workflow.get('permissions'), {})
+            trigger = workflow.get('on', workflow.get(True))
+            self.assertEqual(set(trigger), {'workflow_dispatch'})
+            for job in workflow['jobs'].values():
+                self.assertNotIn('continue-on-error', job)
+                self.assertEqual(job.get('permissions'), {})
                 self.assertEqual(job['runs-on'], ['self-hosted', 'Linux', 'X64', 'unitera-ci', 'relay'])
                 for step in job['steps']:
                     for key in ['uses', 'continue-on-error', 'if']:
