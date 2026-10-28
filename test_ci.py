@@ -315,7 +315,7 @@ class GuestStaticTests(unittest.TestCase):
 
     def test_launcher_is_mechanical(self):
         self.assertIn('set -eu', START)
-        for allowed in ['qemu-img', 'git', 'date', 'exec "$@"', 'argv.args']:
+        for allowed in ['qemu-img', 'git', 'date', '"$@"', 'argv.args', 'vm-exit.rc']:
             self.assertIn(allowed, START)
         self.assertNotIn('curl', START)
         self.assertNotIn('sudo', START)

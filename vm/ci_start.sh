@@ -1,7 +1,8 @@
 #!/bin/sh
 # Mechanical VM launcher for the source-CI lane. Dumb by design:
-# it only materializes the qcow2 overlay for the prepared base image and then exec's the
-# exact validated argv from <run>/launch/argv.args. All decisions were made in Python.
+# it only materializes the qcow2 overlay for the prepared base image, runs the
+# exact validated argv from <run>/launch/argv.args and records its exit code.
+# All decisions were made in Python.
 set -eu
 [ "$#" -eq 1 ] || { echo "usage: ci_start.sh <run-dir>" >&2; exit 64; }
 dir="$1"
@@ -16,4 +17,7 @@ set --
 while IFS= read -r line; do
   set -- "$@" "$line"
 done < "$dir/launch/argv.args"
-exec "$@"
+rc=0
+"$@" || rc=$?
+printf '%s\n' "$rc" > "$dir/vm-exit.rc"
+exit "$rc"
