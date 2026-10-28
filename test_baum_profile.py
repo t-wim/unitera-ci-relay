@@ -106,22 +106,23 @@ class PlanBindingTests(unittest.TestCase):
         # Live finding: with a FILE 'plan' plus script entries under 'plan/...', the
         # parent-dir records suppressed the file and the guest saw an empty directory.
         import gzip
-        import struct
         from image import cpio
         entries = {'plan': (b'g4_node24|60|/ws/src|bash\n', 0o600),
                    'plan/governance-guardrails.yml/governance/4.sh': (b'true\n', 0o600)}
         raw = gzip.decompress(gzip.compress(cpio(entries), mtime=0))
         records = {}
         offset = 0
-        while offset < len(raw):
+        while offset + 110 <= len(raw):
             if raw[offset:offset + 6] != b'070701':
                 break
-            fields = struct.unpack('>13I', raw[offset + 6:offset + 58])
-            mode, filesize, namesize = fields[1], fields[6], fields[11]
-            name = raw[offset + 58:offset + 58 + namesize - 1].decode()
+            header = raw[offset + 6:offset + 110]
+            mode = int(header[8:16], 16)      # newc fields are ASCII hex
+            filesize = int(header[48:56], 16)
+            namesize = int(header[88:96], 16)
+            name = raw[offset + 110:offset + 110 + namesize - 1].decode()
             if name == 'TRAILER!!!':
                 break
-            data_start = (offset + 58 + namesize + 3) // 4 * 4
+            data_start = (offset + 110 + namesize + 3) // 4 * 4
             records.setdefault(name, []).append((mode & 0o170000, filesize))
             offset = (data_start + filesize + 3) // 4 * 4
         self.assertEqual(records['plan'], [(0o100000, len(entries['plan'][0]))])
