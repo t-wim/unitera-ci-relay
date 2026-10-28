@@ -326,10 +326,12 @@ def disk(private, commit, verified):
     if disk_root.exists():
         raise ValueError('staging disk exists; reconcile explicitly')
     (disk_root / 'work').mkdir(parents=True)
-    # The guest must receive the exact committed tree (no node_modules, no .git);
-    # its own c1b check re-derives the tree identity from this materialized content.
-    shutil.copytree(prep / 'staging-src', disk_root / 'src',
-                    ignore=shutil.ignore_patterns('node_modules'), symlinks=True)
+    # The guest must receive the exact committed tree (no .git); its own c1b check
+    # re-derives the tree identity from this materialized content. Copy verbatim
+    # (symlinks included — the tracked .quarantine node_modules link must survive),
+    # then drop only the real root node_modules the host store build created.
+    shutil.copytree(prep / 'staging-src', disk_root / 'src', symlinks=True)
+    shutil.rmtree(disk_root / 'src' / 'node_modules', ignore_errors=True)
     shutil.copytree(assets / 'store', disk_root / 'store')
     content_bytes = sum(f.stat().st_size for f in disk_root.rglob('*') if f.is_file())
     # The guest reconstructs .git (re-hashed blobs) and installs node_modules into the

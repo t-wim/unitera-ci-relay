@@ -214,6 +214,29 @@ class TypedTreeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             baum_prep.parse_typed_ls_tree(raw)
 
+    def test_disk_preserves_tracked_node_modules_symlink(self):
+        # Regression: copytree(ignore_patterns('node_modules')) once ate the tracked
+        # .quarantine .../node_modules symlink; the guest's c1b tree proof caught it.
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            private = Path(temp)
+            prep = private / 'prep'
+            assets = private / 'ci-assets'
+            (assets / 'store').mkdir(parents=True)
+            (prep / 'staging-src' / '.quarantine').mkdir(parents=True)
+            (prep / 'staging-src' / 'a.txt').write_text('A\n')
+            (prep / 'staging-src' / 'node_modules').mkdir()
+            (prep / 'staging-src' / 'node_modules' / 'host-built.js').write_text('x')
+            (prep / 'staging-src' / '.quarantine' / 'node_modules').symlink_to('../a.txt')
+            (prep / 'store-build.rc').write_text('0\n')
+            with patch('baum_prep.private_path', lambda value: Path(value)):
+                result = baum_prep.disk(private, 'a' * 40, {'symlinks': [], 'gitlinks': []})
+            src = prep / 'disk' / 'src'
+            self.assertEqual((src / 'a.txt').read_text(), 'A\n')
+            self.assertFalse((src / 'node_modules').exists())
+            self.assertTrue((src / '.quarantine' / 'node_modules').is_symlink())
+            self.assertIn('steps3', result)
+
 
 class BaumManifestTests(unittest.TestCase):
     def make_manifest(self, repository):
