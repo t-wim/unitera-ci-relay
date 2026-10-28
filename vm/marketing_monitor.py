@@ -149,7 +149,8 @@ def validate_config_value(key, value):
         raise ValueError('ci-config value charset rejected: ' + key)
 
 
-def launch(private, plan_name, mode, abort_delay_s=None, deadline_s=None, guest_mib=None):
+def launch(private, plan_name, mode, abort_delay_s=None, deadline_s=None, guest_mib=None,
+           guest_mode=None):
     private = private_path(private)
     assets_dir = assets(private)
     prep, image_record, mkt_record = verify_prepared(assets_dir)
@@ -185,7 +186,7 @@ def launch(private, plan_name, mode, abort_delay_s=None, deadline_s=None, guest_
     probe.bind(('127.0.0.1', 0))
     port = probe.getsockname()[1]
     probe.close()
-    config = {'MODE': mode, 'HOST_PORT': port, 'LAN_PROBE': local_lan_address(),
+    config = {'MODE': guest_mode or mode, 'HOST_PORT': port, 'LAN_PROBE': local_lan_address(),
               'HOST_CANARY_PATH': canaries['host'][0], 'REVIEW_CANARY_PATH': canaries['review'][0],
               'STATUS_CANARY_PATH': canaries['status'][0], 'SOCKET_CANARY_PATH': unix_path,
               'EXPECTED_FILE_COUNT': prep['source']['file_count'],

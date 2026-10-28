@@ -44,7 +44,7 @@ CASES = (
     {'index': 2, 'case': 'failure', 'plan': 'q2_deliberate_failure', 'mode': 'run'},
     {'index': 3, 'case': 'timeout', 'plan': 'q3_resource_timeout', 'mode': 'run'},
     {'index': 4, 'case': 'cancel', 'plan': 'production', 'mode': 'abort_after_ready',
-     'abort_delay_s': 3},
+     'guest_mode': 'hold', 'abort_delay_s': 3},
     {'index': 5, 'case': 'success', 'plan': 'production', 'mode': 'run'},
 )
 
@@ -143,7 +143,8 @@ def _cleanup_view(cleanup, canaries_absent, limits_verified):
 def _run_vm(relay_root, private, case):
     validated_relay_root(relay_root)
     run = marketing_monitor.launch(private, case['plan'], case['mode'],
-                                   case.get('abort_delay_s'))
+                                   case.get('abort_delay_s'),
+                                   guest_mode=case.get('guest_mode'))
     run_dir = validated_run_dir(private, run['run_dir'])
 
     def reap():

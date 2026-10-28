@@ -72,24 +72,37 @@ def reasons_from(run_dir, expect_plan=None, prep_manifest=None):
             ready = True
     if not ready:
         problems.append('SRC_READY not present in console')
+    cancelled = result.get('outcome') == 'cancelled'
     expected = set(run['expected_checks'])
     if expect_plan:
         expected = set(marketing_plan.expected_check_set(expect_plan)) | set(ISOLATION_CHECKS)
-    missing = expected - set(checks_seen)
-    if missing:
-        problems.append('console missing checks: ' + ','.join(sorted(missing))[:200])
+    try:
+        plan_checks = {entry['name'] for entry in marketing_plan.plan_by_name(
+            expect_plan or manifest.get('test_plan') or run.get('plan_name'))}
+    except ValueError:
+        plan_checks = set()
+        problems.append('unknown test plan binding in evidence')
+    if cancelled:
+        # A cancelled VM is torn down while holding: guest-native and isolation
+        # checks must have run, but no plan command may claim completion.
+        required = set(ISOLATION_CHECKS) | set(marketing_plan.GUEST_NATIVE_CHECKS)
+        missing = required - set(checks_seen)
+        if missing:
+            problems.append('console missing mandatory checks: ' + ','.join(sorted(missing))[:200])
+        completed_plan = set(checks_seen) & plan_checks
+        if completed_plan:
+            problems.append('cancelled run claims completed plan checks: '
+                            + ','.join(sorted(completed_plan))[:200])
+    else:
+        missing = expected - set(checks_seen)
+        if missing:
+            problems.append('console missing checks: ' + ','.join(sorted(missing))[:200])
     unexpected = set(checks_seen) - expected
-    if unexpected:
+    if unexpected and not cancelled:
         problems.append('console has unexpected checks: ' + ','.join(sorted(unexpected))[:200])
     manifest_checks = {entry['check_name']: entry for entry in manifest['checks']}
     if set(manifest_checks) != expected:
         problems.append('manifest check set differs from expected mandatory set')
-    plan_name = expect_plan or manifest.get('test_plan') or run.get('plan_name')
-    try:
-        plan_checks = {entry['name'] for entry in marketing_plan.plan_by_name(plan_name)}
-    except ValueError:
-        plan_checks = set()
-        problems.append('unknown test plan binding in evidence')
     if expect_plan and manifest.get('test_plan') != expect_plan:
         problems.append('manifest test plan differs from expected plan')
     for name, entry in manifest_checks.items():
@@ -98,7 +111,8 @@ def reasons_from(run_dir, expect_plan=None, prep_manifest=None):
         recorded_tmo = tmos_seen.get(name, 0)
         recorded_digest = digests_seen.get(name)
         if observed is None:
-            problems.append('manifest check absent from console: ' + name)
+            if not (cancelled and name in plan_checks):
+                problems.append('manifest check absent from console: ' + name)
             continue
         if entry['result'] == 'PASS':
             if observed != 'PASS' or entry['exit_code'] != 0 or entry['timeout'] != 0:
