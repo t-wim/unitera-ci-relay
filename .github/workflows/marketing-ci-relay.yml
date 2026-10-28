@@ -1,0 +1,49 @@
+name: UNITERA Marketing CI Relay - Admission Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact reviewed marketing commit SHA
+        required: true
+        type: string
+      expected_relay_sha:
+        description: Exact reviewed relay workflow commit SHA
+        required: true
+        type: string
+      source_pr:
+        description: Source PR number (provenance only)
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: marketing-relay-quarantine
+  cancel-in-progress: false
+
+jobs:
+  marketing-admission:
+    runs-on: [self-hosted, Linux, X64, unitera-ci, relay]
+    timeout-minutes: 3
+    permissions: {}
+    steps:
+      - name: Check exact relay and source commit pins, without checkout
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          EXPECTED_RELAY_SHA: ${{ inputs.expected_relay_sha }}
+          ACTUAL_RELAY_SHA: ${{ github.sha }}
+          SOURCE_PR: ${{ inputs.source_pr }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          [[ "$EXPECTED_RELAY_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          [[ "$SOURCE_PR" =~ ^[1-9][0-9]*$ ]] || exit 2
+          test "$EXPECTED_RELAY_SHA" = "$ACTUAL_RELAY_SHA" || exit 2
+          echo MARKETING_RELAY_PINS_VALID
+      - name: Fail closed until marketing Python VM is qualified
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '::error::MARKETING_CI_QUARANTINED: Python guest VM, exact-source isolation and CI parity are not qualified'
+          exit 1
