@@ -124,7 +124,7 @@ def build_argv(kernel, base_image, job_dir, unit, profile):
             '-p', 'TasksMax=' + str(profile['tasks_max']), *wrapped]
 
 
-def append_job_overlay(initrd_path, config, plan):
+def append_job_overlay(initrd_path, config, plan, assets_dir=None):
     import gzip
     import shlex
     from image import cpio
@@ -135,6 +135,10 @@ def append_job_overlay(initrd_path, config, plan):
         lines.append(key + '=' + shlex.quote(text))
     plan_text = marketing_plan.serialize_plan(plan)
     data = {'ci-config': ('\n'.join(lines).encode(), 0o600), 'plan': (plan_text.encode(), 0o600)}
+    if assets_dir is not None:
+        # The custody inventory travels with the per-job initrd overlay, binding
+        # every launch to the exact prepared source inventory.
+        data['inventory.sha256'] = ((assets_dir / 'inventory.sha256').read_bytes(), 0o644)
     return initrd_path.read_bytes() + gzip.compress(cpio(data), mtime=0)
 
 
@@ -186,7 +190,8 @@ def launch(private, plan_name, mode, abort_delay_s=None, deadline_s=None, guest_
               'STATUS_CANARY_PATH': canaries['status'][0], 'SOCKET_CANARY_PATH': unix_path,
               'EXPECTED_FILE_COUNT': prep['source']['file_count'],
               'PYTHON_VERSION': prep['python_runtime']['version']}
-    (job_dir / 'initrd').write_bytes(append_job_overlay(assets_dir / 'marketing-initrd', config, plan))
+    (job_dir / 'initrd').write_bytes(append_job_overlay(assets_dir / 'marketing-initrd',
+                                                        config, plan, assets_dir))
     unit = 'unitera-marketing-vm-' + run_id + '.scope'
     write_args_file(run_dir / 'launch' / 'argv.args',
                     build_argv(assets_dir / 'kernel', assets_dir / 'ws-base.img', job_dir, unit, profile))

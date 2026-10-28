@@ -42,8 +42,12 @@ def _runtime_files(lock):
     ldd = subprocess.run(['ldd', str(binary)], capture_output=True, text=True,
                          env={'PATH': '/usr/bin:/bin'})
     for library in sorted(set(_re.findall(r'(/[A-Za-z0-9_./+-]+)', ldd.stdout))):
-        if Path(library).is_file():
-            files['usr/' + library.lstrip('/')] = Path(library)
+        resolved = Path(library).resolve()
+        if resolved.is_file():
+            # Resolve the printed spelling so /lib -> /usr/lib remaps cannot double
+            # the prefix; the ELF interpreter is additionally placed at its
+            # hard-coded /lib64 location below.
+            files['usr/' + str(resolved).lstrip('/')] = resolved
     stdlib = Path(lock['stdlib_root'])
     excluded = set(lock['stdlib_excludes'])
     for path in sorted(stdlib.rglob('*')):
@@ -113,6 +117,15 @@ def build_marketing_initrd(assets):
             toolchain_lines.append(record['sha256'] + '  /' + destination)
     entries['fixtures/exit-one.py'] = (FIXTURE_EXIT_ONE.encode(), 0o644)
     entries['fixtures/hold.py'] = (FIXTURE_HOLD.encode(), 0o644)
+    # The guest kernel/initrd root has no /lib64; the distribution ELF interpreter
+    # is hard-coded to /lib64/ld-linux-x86-64.so.2, so it must exist at exactly
+    # that top-level path (same placement as the qualified source-CI lane).
+    loader = files.get('usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2')
+    if loader is None:
+        raise ValueError('ELF interpreter not found among verified runtime files')
+    entries['lib64/ld-linux-x86-64.so.2'] = (loader.read_bytes(), 0o755)
+    toolchain_lines.append(hashlib.sha256(entries['lib64/ld-linux-x86-64.so.2'][0]).hexdigest()
+                           + '  /lib64/ld-linux-x86-64.so.2')
     entries['toolchain.sha256'] = ('\n'.join(sorted(toolchain_lines)) + '\n').encode(), 0o644
     guest_init = (Path(__file__).parent / 'marketing_guest.sh').read_bytes()
     entries['init'] = (guest_init, 0o755)
