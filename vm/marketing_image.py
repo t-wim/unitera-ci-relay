@@ -22,6 +22,16 @@ FIXTURE_EXIT_ONE = 'import sys\nsys.exit(1)\n'
 FIXTURE_HOLD = 'import time\ntime.sleep(1800)\n'
 
 
+def _guest_lib_path(resolved):
+    """Map a resolved host library path to its guest initramfs location.
+
+    The guest root keeps the distribution usr-merge layout (/lib -> usr/lib),
+    so /usr/... stays as-is and every other top-level library directory is
+    placed under usr/."""
+    text = str(resolved).lstrip('/')
+    return text if text.startswith('usr/') else 'usr/' + text
+
+
 def _runtime_files(lock):
     """Every distribution file that constitutes the guest Python runtime."""
     files = {}  # guest path -> host source path
@@ -44,10 +54,10 @@ def _runtime_files(lock):
     for library in sorted(set(_re.findall(r'(/[A-Za-z0-9_./+-]+)', ldd.stdout))):
         resolved = Path(library).resolve()
         if resolved.is_file():
-            # Resolve the printed spelling so /lib -> /usr/lib remaps cannot double
-            # the prefix; the ELF interpreter is additionally placed at its
-            # hard-coded /lib64 location below.
-            files['usr/' + str(resolved).lstrip('/')] = resolved
+            # Resolve the printed spelling (usr-merge hosts print /usr/..., others
+            # /lib/...) into the guest's usr-merge layout; the ELF interpreter is
+            # additionally placed at its hard-coded /lib64 location below.
+            files[_guest_lib_path(resolved)] = resolved
     stdlib = Path(lock['stdlib_root'])
     excluded = set(lock['stdlib_excludes'])
     for path in sorted(stdlib.rglob('*')):
