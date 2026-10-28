@@ -72,12 +72,16 @@ def _runtime_files(lock):
 
 
 def _closure_libraries(host_paths):
-    """DT_NEEDED closure over every ELF object in the runtime (lib-dynload included)."""
+    """DT_NEEDED closure over every ELF object in the runtime (lib-dynload included).
+
+    SONAME spellings are frequently symlinks to the versioned file; they must be
+    kept (the loader requests the SONAME) and are read through the link while
+    verified_system_file dpkg-verifies the resolved target."""
     records, seen = [], set()
     pending = list(host_paths)
     while pending:
         path = Path(pending.pop())
-        if path in seen or not path.is_file() or path.is_symlink():
+        if path in seen or not path.is_file():
             continue
         seen.add(path)
         with path.open('rb') as handle:
@@ -89,7 +93,7 @@ def _closure_libraries(host_paths):
             if candidate is not None:
                 pending.append(candidate)
     for path in sorted(seen):
-        if path.is_file() and path.read_bytes()[:4] == b'\x7fELF':
+        if path.is_file():
             _data, record = verified_system_file(path)
             records.append(record)
     return records
