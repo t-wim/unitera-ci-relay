@@ -9,7 +9,7 @@ base=$(sed -n '1p' "$dir/launch/overlay.txt")
 overlay=$(sed -n '2p' "$dir/launch/overlay.txt")
 [ -f "$base" ] || { echo "missing base image: $base" >&2; exit 65; }
 [ -f "$overlay" ] || qemu-img create -f qcow2 -b "$base" -F raw "$overlay"
-relay_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+relay_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 git -C "$relay_root" rev-parse HEAD > "$dir/relay-head.txt"
 date -u +%Y-%m-%dT%H:%M:%SZ > "$dir/started-at.txt"
 set --

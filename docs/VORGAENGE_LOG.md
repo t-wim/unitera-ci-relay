@@ -83,3 +83,20 @@ leak into the workspace image) were caught by the controller's own fail-closed c
 were no-ops; both root causes are fixed in code. No workflow enablement, runner
 registration, status writeback, source merge, push or token use occurred. Private assets,
 ledgers and run evidence stay outside the publication tree.
+
+## Execution binding repair candidate
+
+logged_at: 2026-10-28T11:43:21.083914+00:00
+author: Codex
+
+Corrected the source-CI launcher's enclosing-workspace Git-root error and required
+trusted caller relay/source pins in the independent verifier before ledger append.
+Affected: vm/ci_start.sh, vm/ci_verify.py, test_execution_binding.py,
+docs/SOURCE_CI.md, publication-policy.json, this append-only log.
+Risk: verifier CLI/API now requires explicit pins; callers must update. Existing
+qualification and publication flags are invalidated for this modified candidate.
+Rollback: discard this isolated uncommitted candidate; retain workflow quarantine.
+Validation: original nested-repository launcher regression FAIL reproduced; repaired
+host battery PASS 104/104, shell syntax and diff whitespace PASS; historical real-run
+readback REJECT for relay-pin mismatch. Fresh VM/source-CI qualification NOT_RUN.
+No workflow, runner, credentials, source, Registry or Atlas state changed.

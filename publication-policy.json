@@ -19,6 +19,7 @@
     "publication-policy.json",
     "test_candidate.py",
     "test_ci.py",
+    "test_execution_binding.py",
     "test_vm.py",
     "vm/ci-lock.json",
     "vm/ci_guest.sh",
@@ -52,13 +53,13 @@
   "qualification": {
     "ISOLATION_QUALIFIED": "NOT_QUALIFIED",
     "CI_PARITY_QUALIFIED": "NOT_QUALIFIED",
-    "EXACT_SOURCE_CI_PASS": "PASS_RUN_e843f434_SOURCE_d297a165_2026_10_27",
+    "EXACT_SOURCE_CI_PASS": "NOT_PROVEN_FOR_REPAIRED_CANDIDATE",
     "STATUS_WRITEBACK_VERIFIED": "NOT_VERIFIED",
-    "MERGE_ELIGIBLE": true,
+    "MERGE_ELIGIBLE": false,
     "MERGED": false,
-    "VM_ISOLATION_QUALIFIED": "FIVE_RUN_LEDGER_2026_10_27_HARDENED_FETCH",
-    "SOURCE_CI_EXECUTION": "QUALIFIED_PRIVATE_OWNER_REVIEW_PENDING"
+    "VM_ISOLATION_QUALIFIED": "REQUALIFICATION_REQUIRED_EXECUTION_BINDING",
+    "SOURCE_CI_EXECUTION": "REQUALIFICATION_REQUIRED"
   },
-  "publication_authorized": "OWNER_ORDER_2026_10_27_ITEM_3_CI_EVIDENCE_INTEGRATION",
-  "publication_provenance": "vm/fetch.py SSRF hardening (guarded_urlopen port, redirect rejection, host allowlist with both pinned Alpine publishers, global-IP resolution check) plus host regression battery 98/98 PASS and a fresh five-run synthetic VM requalification bound to the hardened fetch.py digest (requal-hardening-20261027, VM_ISOLATION_QUALIFIED=true, 18 implementation files); source-CI PASS evidence: run e843f434d05a4b6290486a4c3e75f30a on Systems d297a165cd4d5b06c044bfa7b0c9e45859898030, 26/26 checks PASS, independent verifier ACCEPT"
+  "publication_authorized": false,
+  "publication_provenance": "Local execution-binding repair candidate; prior publication authorization and run evidence do not qualify this changed implementation. Review, exact commit pin, and new qualification are required."
 }

@@ -134,8 +134,24 @@ def ledger_append(private, run_id, manifest_digest):
     return True
 
 
-def verify(run_dir, private, expect_plan=None, prep_manifest=None, append=False):
+def execution_pin_problems(manifest, run, relay_pin, source_pin):
+    """Pins come from the trusted caller, never from the run being verified."""
+    for pin in (relay_pin, source_pin):
+        if not isinstance(pin, str) or not re.fullmatch(r'[0-9a-f]{40}', pin) or pin == '0' * 40:
+            raise ValueError('execution pins must be nonzero full commit SHAs')
+    problems = []
+    if manifest.get('relay_commit_sha') != relay_pin:
+        problems.append('relay commit differs from trusted dispatch pin')
+    if manifest.get('source_commit_sha') != source_pin or run.get('source_commit_sha') != source_pin:
+        problems.append('source commit differs from trusted dispatch source')
+    return problems
+
+
+def verify(run_dir, private, expect_plan=None, prep_manifest=None, append=False,
+           *, relay_pin, source_pin):
     manifest, problems = reasons_from(run_dir, expect_plan, prep_manifest)
+    run = json.loads((Path(run_dir) / 'run.json').read_text())
+    problems.extend(execution_pin_problems(manifest, run, relay_pin, source_pin))
     if append:
         if problems:
             problems.append('ledger append refused: run not accepted')
@@ -152,9 +168,14 @@ if __name__ == '__main__':
     parser.add_argument('--expect-plan')
     parser.add_argument('--prep-manifest', type=Path)
     parser.add_argument('--append-ledger', action='store_true')
+    parser.add_argument('--relay-pin', required=True,
+                        help='Full reviewed relay SHA from the trusted caller policy')
+    parser.add_argument('--source-pin', required=True,
+                        help='Full source SHA from the trusted dispatch request')
     args = parser.parse_args()
     manifest, problems = verify(args.run, args.private, args.expect_plan,
-                                args.prep_manifest, args.append_ledger)
+                                args.prep_manifest, args.append_ledger,
+                                relay_pin=args.relay_pin, source_pin=args.source_pin)
     print(json.dumps({'run_id': manifest['run_id'], 'overall_result': manifest['overall_result'],
                       'verdict': 'ACCEPT' if not problems else 'REJECT',
                       'problems': problems}, indent=2))

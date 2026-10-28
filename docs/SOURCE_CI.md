@@ -82,3 +82,22 @@ record, cgroup readback, result.json, manifest.json (strict schema) and a digest
 `ci_verify.py` re-derives the verdict independently and maintains an append-only run-id
 ledger (replay-rejected). A local hash chain is consistency evidence, not a cryptographic
 attestation.
+
+## Execution identity readback repair (2026-10-28, local candidate)
+
+The launcher resolved `vm/../..`, recording the enclosing workspace commit instead of
+its own relay commit in nested repositories. It now resolves `vm/..`.
+A nested-Git regression executes the launcher with a harmless `/usr/bin/true` payload
+and existing fixture overlay, without starting QEMU or materializing an image.
+
+The verifier CLI now requires `--relay-pin` and `--source-pin`. These are supplied by
+the trusted caller policy and dispatch custody, never copied from the evidence manifest.
+`verify()` requires the same keyword arguments and rejects mismatches before ledger append.
+Existing caller commands must supply both pins; the workflow input contract is unchanged.
+The trusted caller must also verify that the checkout and executed implementation match
+its reviewed pin; this repair does not make a mutable checkout trusted.
+
+The previously reported run e843f434d05a4b6290486a4c3e75f30a has authentic source test
+results but records an enclosing-workspace SHA. It must not be admitted as exact-relay
+execution evidence. This local candidate has only host regression evidence, not fresh
+VM qualification or a released commit. Both workflows remain quarantined.
