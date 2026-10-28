@@ -120,7 +120,7 @@ def build_marketing_initrd(assets):
     # The guest kernel/initrd root has no /lib64; the distribution ELF interpreter
     # is hard-coded to /lib64/ld-linux-x86-64.so.2, so it must exist at exactly
     # that top-level path (same placement as the qualified source-CI lane).
-    loader = files.get('usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2')
+    loader = runtime_files.get('usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2')
     if loader is None:
         raise ValueError('ELF interpreter not found among verified runtime files')
     entries['lib64/ld-linux-x86-64.so.2'] = (loader.read_bytes(), 0o755)
