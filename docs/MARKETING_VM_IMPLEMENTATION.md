@@ -80,3 +80,32 @@ runtime activation or modifications to the original Systems VM are permitted.
 - Draft PR #5 remains quarantined, unmerged and not runner-admitted.
 
 **Do not change these facts to PASS solely because unit tests or mock receipts pass.**
+
+## Implementation status update (2026-10-28, implementation branch)
+
+The previously listed gaps 1-5 are now implemented on
+`feat/marketing-python-vm-implementation-20261028`:
+
+- `vm/marketing-runtime-lock.json` + `vm/marketing_image.py`: digest-pinned Python 3.14.4
+  guest runtime from dpkg-verified distribution packages (710 files incl. stdlib and
+  lib-dynload closure), reverified before every launch and inside the guest (c2).
+- `vm/marketing_prep.py`: custody export via `marketing_source_custody` (exact SHA,
+  git blob re-derivation, SHA-256 inventory, symlink/submodule/private denial) plus
+  ext4 workspace image build; no marketing code execution on the host.
+- `vm/marketing_guest.sh`, `vm/marketing_plan.py`, `vm/marketing_start.sh`,
+  `vm/marketing_monitor.py`: the fixed three-command battery executes only inside the
+  disposable QEMU/KVM lane (`marketing-python-vm-v1`, unit-separator argv protocol,
+  no host shares, restrict=on/ipv6=off networking, bwrap+systemd scope limits).
+- `vm/marketing_verify.py`: independent verifier with prep-manifest binding, raw
+  console re-derivation, actual-exit-code enforcement, positive-control gates,
+  fail-closed unknown-outcome handling and run-id replay ledger.
+- `vm/marketing_qualify.py` + updated `vm/marketing_vm_qualification.py`: real Q1-Q5
+  driver on the live host; `VM_ISOLATION_QUALIFIED` requires five verified real cases
+  AND a host binding to the exact committed implementation digests.
+- `vm/marketing_status_writeback.py`: independent SHA-bound GET readback added;
+  sending stays owner-gated and is NOT activated.
+
+Owner admission for runner activation, status delivery and workflow changes remains
+a separate human gate. See
+`docs/MARKETING_PYTHON_VM_QUALIFICATION_2026-10-28.md` for the live evidence.
+

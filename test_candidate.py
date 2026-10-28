@@ -13,20 +13,38 @@ import audit_publication as audit
 ROOT = Path(__file__).resolve().parent
 
 
+def trigger_inputs(workflow):
+    trigger = workflow.get('on', workflow.get(True))
+    return trigger['workflow_dispatch']['inputs']
+
+
 class QuarantineTests(unittest.TestCase):
     def workflows(self):
         return [yaml.safe_load(p.read_text()) for p in sorted((ROOT / '.github/workflows').glob('*.yml'))]
 
+    def systems_workflows(self):
+        return [w for w in self.workflows() if 'isolation-blocked' in w.get('jobs', {})]
+
+    def marketing_workflows(self):
+        return [w for w in self.workflows() if 'marketing-admission' in w.get('jobs', {})]
+
     def test_both_entrypoints_have_no_source_or_credential_operation(self):
-        self.assertEqual(len(self.workflows()), 2)
+        self.assertEqual(len(self.workflows()), 3)
+        self.assertEqual(len(self.systems_workflows()), 2)
+        self.assertEqual(len(self.marketing_workflows()), 1)
         for workflow in self.workflows():
             self.assertEqual(workflow['permissions'], {})
-            self.assertEqual(set(workflow['jobs']), {'execution-pin', 'isolation-blocked'})
-            self.assertEqual(workflow['jobs']['isolation-blocked']['needs'], ['execution-pin'])
             trigger = workflow.get('on', workflow.get(True))
             self.assertEqual(set(trigger), {'workflow_dispatch'})
-            self.assertEqual(set(trigger['workflow_dispatch']['inputs']), {'source_sha', 'base_sha', 'expected_relay_sha', 'source_pr'})
             self.assertTrue(all(v['required'] for v in trigger['workflow_dispatch']['inputs'].values()))
+        for workflow in self.systems_workflows():
+            self.assertEqual(set(workflow['jobs']), {'execution-pin', 'isolation-blocked'})
+            self.assertEqual(workflow['jobs']['isolation-blocked']['needs'], ['execution-pin'])
+            self.assertEqual(set(trigger_inputs(workflow)), {'source_sha', 'base_sha', 'expected_relay_sha', 'source_pr'})
+        for workflow in self.marketing_workflows():
+            self.assertEqual(set(workflow['jobs']), {'marketing-admission'})
+            self.assertEqual(set(trigger_inputs(workflow)), {'source_sha', 'expected_relay_sha', 'source_pr'})
+        for workflow in self.workflows():
             for job in workflow['jobs'].values():
                 self.assertNotIn('continue-on-error', job)
                 self.assertEqual(job['permissions'], {})
@@ -39,16 +57,23 @@ class QuarantineTests(unittest.TestCase):
                     self.assertNotRegex(step['run'], r'(?m)^\s*(git|docker|pnpm|curl|sudo|ssh|eval|source)\s')
 
     def test_correct_pin_and_qualification_flags_still_cannot_admit_execution(self):
-        for workflow in self.workflows():
+        for workflow in self.systems_workflows():
             for flag in ['', 'true', 'false']:
                 run = workflow['jobs']['isolation-blocked']['steps'][0]['run']
                 result = subprocess.run(['bash', '-c', run], capture_output=True, text=True,
                                         env={'PATH': '/usr/bin:/bin', 'QUALIFIED': flag})
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('RELAY_QUARANTINED', result.stdout)
+        for workflow in self.marketing_workflows():
+            for flag in ['', 'true', 'false']:
+                run = workflow['jobs']['marketing-admission']['steps'][1]['run']
+                result = subprocess.run(['bash', '-c', run], capture_output=True, text=True,
+                                        env={'PATH': '/usr/bin:/bin', 'VM_ISOLATION_QUALIFIED': flag})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('MARKETING_CI_QUARANTINED', result.stdout + result.stderr)
 
     def test_wrong_missing_and_malformed_pins_deny_before_any_other_job(self):
-        for workflow in self.workflows():
+        for workflow in self.systems_workflows():
             step = workflow['jobs']['execution-pin']['steps'][0]
             good = {'PATH': '/usr/bin:/bin', 'EXPECTED_RELAY_SHA': 'a'*40, 'ACTUAL_RELAY_SHA': 'a'*40,
                     'SOURCE_SHA': 'b'*40, 'BASE_SHA': 'c'*40, 'SOURCE_PR': '7'}
@@ -60,6 +85,18 @@ class QuarantineTests(unittest.TestCase):
                 result = subprocess.run(['bash', '-c', step['run']], env={**good, **change}, capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, ok)
                 self.assertEqual('RELAY_EXECUTION_PIN_PASS' in result.stdout, ok)
+        for workflow in self.marketing_workflows():
+            step = workflow['jobs']['marketing-admission']['steps'][0]
+            good = {'PATH': '/usr/bin:/bin', 'EXPECTED_RELAY_SHA': 'a'*40, 'ACTUAL_RELAY_SHA': 'a'*40,
+                    'SOURCE_SHA': 'b'*40, 'SOURCE_PR': '7'}
+            cases = [({}, True), ({'ACTUAL_RELAY_SHA': 'd'*40}, False), ({'EXPECTED_RELAY_SHA': ''}, False),
+                     ({'EXPECTED_RELAY_SHA': 'x'*40, 'ACTUAL_RELAY_SHA': 'x'*40}, False),
+                     ({'SOURCE_SHA': 'invalid'}, False), ({'SOURCE_PR': '0'}, False),
+                     ({'SOURCE_PR': '$(id)'}, False)]
+            for change, ok in cases:
+                result = subprocess.run(['bash', '-c', step['run']], env={**good, **change}, capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, ok)
+                self.assertEqual('MARKETING_RELAY_PINS_VALID' in result.stdout, ok)
 
     def test_shell_syntax(self):
         for workflow in self.workflows():

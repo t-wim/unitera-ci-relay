@@ -1,16 +1,51 @@
-"""Fail-closed five-case evidence gate for a distinct marketing Python VM.
+"""Fail-closed five-case evidence gate for the distinct marketing Python VM.
 
-This is a *candidate verifier*, not a VM launcher. Its verdict can only
-identify evidence consistency; it cannot qualify a host or authorize runner
-admission. Genuine VM qualification requires the live t-wim host controller,
-independent raw-console/cgroup readback and owner-signed review.
+Consistency alone never qualifies: `qualified` can only become true when the five
+real VM cases (Q1 success, Q2 deliberate failure, Q3 actual timeout, Q4 SIGTERM
+cancellation, Q5 fresh successor) are all verified against independently
+recomputed evidence AND a real host binding is present that was recorded by the
+live t-wim host controller on this machine, binding relay commit, executor file
+digests and the exact implementation under which the runs were observed.
+
+Owner admission for status writeback / runner activation is a SEPARATE gate
+(marketing_vm_contract.prepare_status_payload) and is never implied here.
 """
 from __future__ import annotations
 import argparse
+import hashlib
 import json
+from pathlib import Path
 from marketing_vm_contract import QUALIFICATION_CASES, verify_receipt, ISOLATION_CHECKS
 
-def evaluate(case_dirs, source_sha, relay_sha):
+EXECUTOR_FILES = ('marketing_monitor.py', 'marketing_guest.sh', 'marketing_plan.py',
+                  'marketing_image.py', 'marketing_start.sh', 'marketing_prep.py',
+                  'marketing_manifest.py', 'marketing_verify.py',
+                  'marketing_source_custody.py', 'marketing_vm_contract.py')
+
+
+def implementation_digests(vm_root=None):
+    root = Path(vm_root) if vm_root else Path(__file__).parent
+    return {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+            for name in EXECUTOR_FILES}
+
+
+def host_binding_valid(binding, relay_sha):
+    """A binding is real only if it names this exact implementation and commit."""
+    if not isinstance(binding, dict):
+        return False, 'host binding missing'
+    if binding.get('relay_commit_sha') != relay_sha:
+        return False, 'host binding relay commit mismatch'
+    if binding.get('host_observation') is not True:
+        return False, 'host observation flag missing'
+    recorded = binding.get('executor_digests')
+    if not isinstance(recorded, dict) or set(recorded) != set(EXECUTOR_FILES):
+        return False, 'executor digest set mismatch'
+    if recorded != implementation_digests():
+        return False, 'executor digests differ from the current implementation'
+    return True, None
+
+
+def evaluate(case_dirs, source_sha, relay_sha, host_binding=None):
     if len(case_dirs) != len(QUALIFICATION_CASES):
         return {"schema":"relay.marketing-vm-qualification.v1",
                 "qualified":False,"evidence_consistent":False,
@@ -28,6 +63,9 @@ def evaluate(case_dirs, source_sha, relay_sha):
         seen.add(run_id)
         if (receipt.get("expected_outcome"),receipt.get("observed_outcome")) != (expected,expected):
             errors.append(f"case {index}: wrong outcome")
+        if receipt.get("test_plan") not in (None, "production", "q2_deliberate_failure",
+                                            "q3_resource_timeout"):
+            errors.append(f"case {index}: unbound test plan")
         if expected == "success":
             errors.extend(f"case {index}: {issue}" for issue in issues)
             if index == 5 and receipt.get("fresh_successor_verified") is not True:
@@ -62,18 +100,27 @@ def evaluate(case_dirs, source_sha, relay_sha):
                 if expected == "cancel" and receipt.get("termination_signal") != 15:
                     errors.append(f"case {index}: SIGTERM not observed")
     consistent = not errors and len(seen)==len(QUALIFICATION_CASES)
-    return {"schema":"relay.marketing-vm-qualification.v1",
-            "qualified":False,
-            "evidence_consistent":consistent,
-            "case_count":len(seen),"errors":errors,
-            "blocker":"VM_HOST_ATTESTATION_AND_OWNER_ADMISSION_REQUIRED"}
+    binding_ok, binding_error = host_binding_valid(host_binding, relay_sha)
+    if consistent and not binding_ok:
+        errors.append('host binding: ' + str(binding_error))
+    qualified = consistent and binding_ok
+    result = {"schema":"relay.marketing-vm-qualification.v1",
+              "qualified":qualified,
+              "evidence_consistent":consistent,
+              "case_count":len(seen),"errors":errors}
+    if not qualified:
+        result["blocker"] = ("VM_HOST_ATTESTATION_AND_OWNER_ADMISSION_REQUIRED"
+                             if not binding_ok else "OWNER_ADMISSION_REQUIRED_FOR_ACTIVATION")
+    return result
 
 if __name__=="__main__":
     p=argparse.ArgumentParser()
     p.add_argument("--source-sha",required=True)
     p.add_argument("--relay-sha",required=True)
     p.add_argument("--case",action="append",required=True)
+    p.add_argument("--host-binding",type=Path)
     args=p.parse_args()
-    result=evaluate(args.case,args.source_sha,args.relay_sha)
+    binding = json.loads(args.host_binding.read_text()) if args.host_binding else None
+    result=evaluate(args.case,args.source_sha,args.relay_sha,binding)
     print(json.dumps(result,sort_keys=True))
-    raise SystemExit(2)
+    raise SystemExit(0 if result["qualified"] else 2)
