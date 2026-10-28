@@ -126,7 +126,10 @@ def append_job_overlay(initrd_path, config, plan):
         validate_config_value(key, text)
         lines.append(key + '=' + shlex.quote(text))
     plan_text = ci_plan.serialize_plan(plan)
-    data = {'ci-config': ('\n'.join(lines).encode(), 0o600), 'plan': (plan_text.encode(), 0o600)}
+    # 'plan/commands' (not 'plan'): the plan directory also carries the verbatim
+    # workflow scripts, and a regular file cannot share its name with a directory.
+    data = {'ci-config': ('\n'.join(lines).encode(), 0o600),
+            'plan/commands': (plan_text.encode(), 0o600)}
     # Verbatim workflow run-step bodies travel as digest-bound script files under /plan;
     # each entry's argv already pins exactly this path (ci_plan.validate_script_entries).
     for entry in plan:

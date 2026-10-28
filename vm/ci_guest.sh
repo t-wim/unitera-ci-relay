@@ -145,7 +145,7 @@ while IFS='|' read -r name tmo plan_cwd rest; do
   fi
   echo "LOGDIGEST $name $(sha256sum "/ws/work/log-$name.log" | cut -d' ' -f1)"
   tail -c 65536 "/ws/work/log-$name.log" | sed "s/^/LOG $name /"
-done < /plan
+done < /plan/commands
 if [ "$failures" -ne 0 ]; then
   echo GUEST_ASSERTIONS_FAILED
   /usr/bin/exit-failure
