@@ -35,6 +35,8 @@ QUALIFICATION_CASES = ("success", "failure", "timeout", "cancel", "success")
 STATUS_CONTEXT = "unitera/marketing-python-vm"
 GUARD_STATE = "QUARANTINED"
 EXECUTION_PROFILE = "marketing-python-vm-v1"
+# busybox timeout exits 143 (TERM) or 137 (KILL) at expiry; GNU timeout exits 124.
+TIMEOUT_EXIT_CODES = (124, 137, 143)
 
 def plan():
     return [{"name": name, "timeout_s": seconds, "cwd": "/ws/src", "argv": list(argv)}
@@ -126,7 +128,7 @@ def verify_receipt(run_dir, expected_source_sha, expected_relay_sha):
             if record["exit_code"] == 0 or record["timeout"]:
                 issues.append("deliberate failure not observed: " + name)
         elif plan_name == "q3_resource_timeout":
-            if record["exit_code"] != 124 or not record["timeout"]:
+            if record["exit_code"] not in TIMEOUT_EXIT_CODES or not record["timeout"]:
                 issues.append("actual command timeout not observed: " + name)
     checks = receipt.get("isolation", {})
     if not isinstance(checks, dict) or set(checks) != ISOLATION_CHECKS or any(

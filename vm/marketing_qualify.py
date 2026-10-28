@@ -195,10 +195,10 @@ def build_receipt(case, run, run_dir, result, console, relay_sha, prep, prior_ru
         negative = failure_exit and all(cleanup.values())
     elif case['case'] == 'timeout':
         tmo_seen = any(flag == 1 for flag in records['tmos'].values())
-        exit_124 = 124 in records['exits'].values()
-        if result.get('outcome') == 'exited' and vm_exit == 35 and tmo_seen and exit_124:
+        exit_timeout = any(code in (124, 137, 143) for code in records['exits'].values())
+        if result.get('outcome') == 'exited' and vm_exit == 35 and tmo_seen and exit_timeout:
             observed = 'timeout'
-        negative = tmo_seen and exit_124 and vm_exit == 35 and all(cleanup.values())
+        negative = tmo_seen and exit_timeout and vm_exit == 35 and all(cleanup.values())
     elif case['case'] == 'cancel':
         if (result.get('outcome') == 'cancelled'
                 and result.get('termination_signal') == 15

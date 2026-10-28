@@ -98,7 +98,9 @@ while IFS='|' read -r name tmo plan_cwd rest; do
   rc=0
   timeout "$tmo" "$@" > "/ws/work/log-$name.log" 2>&1 || rc=$?
   tmo_hit=0
-  [ "$rc" -eq 124 ] && tmo_hit=1
+  # busybox timeout terminates with SIGTERM (143) or SIGKILL (137); GNU timeout
+  # reports 124. All three are the per-command timeout outcome, never success.
+  case "$rc" in 124|137|143) tmo_hit=1 ;; esac
   echo "EXIT $name $rc"
   echo "TMO $name $tmo_hit"
   if [ "$rc" -eq 0 ]; then
