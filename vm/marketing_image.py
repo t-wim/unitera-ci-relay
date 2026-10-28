@@ -52,12 +52,12 @@ def _runtime_files(lock):
     ldd = subprocess.run(['ldd', str(binary)], capture_output=True, text=True,
                          env={'PATH': '/usr/bin:/bin'})
     for library in sorted(set(_re.findall(r'(/[A-Za-z0-9_./+-]+)', ldd.stdout))):
-        resolved = Path(library).resolve()
-        if resolved.is_file():
-            # Resolve the printed spelling (usr-merge hosts print /usr/..., others
-            # /lib/...) into the guest's usr-merge layout; the ELF interpreter is
-            # additionally placed at its hard-coded /lib64 location below.
-            files[_guest_lib_path(resolved)] = resolved
+        spelled = Path(library)
+        if spelled.is_file():
+            # Placement keeps the ldd-printed SONAME filename (following the
+            # symlink would store the versioned name the loader never requests);
+            # verified_system_file resolves for reading and dpkg verification.
+            files[_guest_lib_path(spelled)] = spelled
     stdlib = Path(lock['stdlib_root'])
     excluded = set(lock['stdlib_excludes'])
     for path in sorted(stdlib.rglob('*')):
@@ -130,7 +130,8 @@ def build_marketing_initrd(assets):
     # The guest kernel/initrd root has no /lib64; the distribution ELF interpreter
     # is hard-coded to /lib64/ld-linux-x86-64.so.2, so it must exist at exactly
     # that top-level path (same placement as the qualified source-CI lane).
-    loader = runtime_files.get('usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2')
+    loader = runtime_files.get('usr/lib64/ld-linux-x86-64.so.2') or \
+        runtime_files.get('usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2')
     if loader is None:
         raise ValueError('ELF interpreter not found among verified runtime files')
     entries['lib64/ld-linux-x86-64.so.2'] = (loader.read_bytes(), 0o755)
