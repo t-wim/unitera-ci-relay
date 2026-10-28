@@ -87,6 +87,13 @@ def verify_prepared(assets_dir):
         raise ValueError('ci initrd digest mismatch')
     if prep['source']['commit'] is None:
         raise ValueError('prep manifest has no source commit')
+    current_guest_init = hashlib.sha256(
+        (Path(__file__).parent / 'ci_guest.sh').read_bytes()).hexdigest()
+    if ci_record.get('guest_init_sha256') != current_guest_init:
+        # Found live: a rebuilt overlay with a stale initrd asset made the guest read
+        # a plan path that no longer existed and pass vacuously. The image must embed
+        # the executor that is actually part of this reviewed implementation.
+        raise ValueError('ci initrd embeds a stale guest executor; rebuild the image')
     return prep, image_record, ci_record
 
 
