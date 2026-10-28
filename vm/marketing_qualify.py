@@ -308,7 +308,7 @@ def qualify(relay_root, private, source_sha):
         case_dirs = _case_run_dirs(private, receipts)
         record = {
             'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-            'relay_commit_sha': relay_sha, 'source_sha': source_sha,
+            'relay_sha': relay_sha, 'source_sha': source_sha,
             'run_ids': [receipt['run_id'] for receipt in receipts],
             'executor_digests': implementation_digests(VM_ROOT),
             'case_manifest_digests': {
