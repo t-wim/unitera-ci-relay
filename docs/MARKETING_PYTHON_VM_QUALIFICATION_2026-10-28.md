@@ -1,5 +1,14 @@
 # UNITERA MARKETING PYTHON VM QUALIFICATION — 2026-10-28
 
+> **Security closure update (same day, PR #8 review):** all seven Codex review
+> findings are fixed and negatively tested; the five-run qualification was
+> re-executed live on the hardened implementation. See the
+> `SECURITY CLOSURE (PR #8 REVIEW)` section at the end for the finding/fix/test
+> matrix and the new evidence bindings (runs `9805827e…`…`54bbcd59…`, chained
+> controller-evidence ledger entry #2, Mimosa deep-scan seal
+> `sha256:366472cb…`). The qualification below was superseded by that
+> requalification; earlier runs remain in the private store as history.
+
 ## REPOSITORY
 
 ```text
@@ -175,3 +184,47 @@ t-wim owner reviews the PR diff (especially publication-policy.json), re-runs
 `python3 -m unittest discover -p 'test_*.py'` on the exact PR head, and — if admitting —
 merges with the quarantine posture unchanged; status writeback stays disabled until the
 source-scoped credential and its negative tests are separately approved.
+
+## SECURITY CLOSURE (PR #8 REVIEW) — 2026-10-28
+
+All seven Codex review findings fixed, each with a reproducible negative test
+(`test_marketing_vm_lane.py`, classes `SecurityClosureTests` /
+`QualificationGateTests` / extended asset-tamper test); offline battery
+143/143 PASS at the requalified head.
+
+| # | Sev | Finding | Fix | Negative test |
+|---|-----|---------|-----|---------------|
+| 1 | P1 | kernel digest unbound at launch | three-way binding file ↔ image record ↔ prep manifest in `verify_prepared`; kernel re-check in the final `inputs_unchanged` gate; `vm_kernel_digest` carried through run.json, manifest schema and verifier prep binding | substituted-kernel and unbound-manifest variants must raise before launch |
+| 2 | P1 | self-declared `host_observation` JSON could qualify (Codex reproduced `qualified=true`) | qualification requires a hash-chained append-only controller-evidence ledger entry (written only by `marketing_qualify` after the five live runs) binding run ids, relay commit, **current** executor digests and per-case evidence-manifest digests, plus full independent evidence re-verification (`marketing_verify.reasons_from`) of every case directory | exact Codex repro (synthetic receipts + crafted binding/ledger) stays unqualified; forged chain, wrong digests and missing evidence manifests all rejected |
+| 3 | P2 | positive-control failure left the launched VM running | host preflight moved inside the cleanup-protected region; **any** non-`exited` outcome (incl. `controller_error:*`) kills and stops the scope | stubbed-lane test: occupied port → `controller_error:OSError`, scope kill + cleanup invoked, fail-closed result.json written |
+| 4 | P2 | lane lock acquired only after QEMU start | exclusive lock acquired in the driver **before** the launcher and handed to `watch()` (single-owner close) | second acquire raises `BLOCKED_LANE_LOCK`; external lock is passed through, not re-acquired |
+| 5 | P2 | fixed RAM gate regardless of `--guest-mib` | `scaled_resource_profile()`: start/floor thresholds derive from guest size (only ever above defaults), persisted in the run profile; guest range 512–4096 validated | 2048 MiB guest with 3000 MiB available must raise; out-of-range sizes rejected |
+| 6 | P2 | ledger read-modify-write race could lose run ids | flock-serialized mutation + atomic `os.replace` publication (`_locked_ledger_write`) | 8 concurrent appends all present afterwards; duplicate still `REPLAY_REJECTED` |
+| 7 | P2 | only memory limits verified | `limits_match()` requires memory.max, memory.swap.max, cpu.max (N% → `N*1000 100000`) and pids.max to match the configured scope | each missing/wrong metric (cpu, pids, swap) fails the gate |
+
+### Requalification evidence (hardened implementation)
+
+```text
+Implementation SHA:   391245c… (all seven fixes; executor digests bound below)
+Source SHA:           1eb696ac361ea44dce1deeb3799e3110077f85a6 (unchanged pin)
+Q1 success            9805827edde1452194913600a0cdc82e  vm_exit 33  ACCEPT
+Q2 failure            1f4f3e75716545d7963affd7a59cec95  vm_exit 35  ACCEPT
+Q3 timeout            93ae1a863aaa471591766755be6cf268  vm_exit 35  ACCEPT
+Q4 cancel (real SIGTERM while holding) 182aec508b0748df962412cad3958582  vm_exit -9  ACCEPT
+Q5 fresh successor    54bbcd59779744bb949ac2120cc2089a  vm_exit 33  ACCEPT
+Controller evidence:  marketing-qualification-ledger.json entry #2
+                      (chain-verified; binds run ids, relay SHA 391245c…,
+                       current executor digests, per-case manifest digests)
+                      — entry #1 records an earlier attempt whose record key
+                      mismatched the verifier; it was left untouched in the
+                      append-only ledger and superseded, never edited.
+Kernel binding:       vm_kernel_digest 40f620bc… in every manifest, three-way
+                      verified pre-launch and at the final input check.
+Replay protection:    duplicate append of 9805827e… → REPLAY_REJECTED.
+Mimosa deep scan:     0 findings, seal sha256:366472cbb5725060d8329b1af6b9ff518f4fe05fa397e2d2f531af60afa378f2
+VM_ISOLATION_QUALIFIED: true (only from the five runs above + ledger entry #2)
+```
+
+Verdict after closure: **PASS** for the seven findings and the requalification.
+Owner admission, merge, workflow activation, runner registration and source
+status writeback remain separately gated and unchanged.
