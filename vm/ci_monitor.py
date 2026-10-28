@@ -411,6 +411,11 @@ def watch(run_dir_path, deadline_override=None):
                 if pids:
                     owned_scope = True
                     observed_pids.update(pids)
+                elif (run_dir / 'started-at.txt').exists() and time.monotonic() - started > 60:
+                    # Drained transient scope: the VM is gone but systemd may keep the
+                    # empty scope active indefinitely; never wait for a stuck rc file.
+                    outcome = 'exited'
+                    break
                 metrics = lane.scope_metrics(unit)
                 if metrics.get('memory.max') == str(int(int(profile['scope_memory_max'][:-1]) * 1024 * 1024)):
                     observed_limits = metrics
