@@ -21,6 +21,10 @@ def cpio(entries):
         if path.is_absolute() or '..' in path.parts:
             raise ValueError('unsafe initramfs path')
         directories.update(str(p) for p in path.parents if str(p) != '.')
+    # A file entry name never becomes a directory record: a dir record with the same
+    # name would make the kernel unpacker drop the file (found live: /plan became an
+    # empty directory and the guest executed a vacuous empty plan).
+    directories -= set(entries)
     records = [(name, b'', stat.S_IFDIR | 0o755) for name in sorted(directories, key=lambda p: (p.count('/'), p))]
     records += [(name, data, stat.S_IFREG | mode) for name, (data, mode) in entries.items()]
     records.append(('TRAILER!!!', b'', 0))

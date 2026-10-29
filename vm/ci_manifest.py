@@ -13,6 +13,7 @@ from ci_util import sha256_file, validate_check_name
 
 SCHEMA = 'relay.ci-run-manifest.v1'
 RESULT_VALUES = {'PASS', 'FAIL', 'BLOCKED', 'SKIPPED'}
+REPOSITORIES = {'baum777/Unitera_Systems', 'baum777/baum-os'}
 TOP_LEVEL_KEYS = {'schema', 'run_id', 'repository', 'source_commit_sha', 'source_artifact_digest',
                   'relay_commit_sha', 'executor_version', 'vm_image_digest', 'toolchain_versions',
                   'dependency_lock_digest', 'execution_profile', 'started_at', 'finished_at',
@@ -36,7 +37,7 @@ def validate_manifest(manifest):
         raise ValueError('schema mismatch: ' + str(manifest['schema']))
     if not isinstance(manifest['run_id'], str) or not re.fullmatch(r'[0-9a-f]{32}', manifest['run_id']):
         raise ValueError('run_id must be a 32-hex string')
-    if manifest['repository'] != 'baum777/Unitera_Systems':
+    if manifest['repository'] not in REPOSITORIES:
         raise ValueError('repository mismatch: ' + str(manifest['repository']))
     for field in ('source_commit_sha', 'relay_commit_sha'):
         if not re.fullmatch(r'[0-9a-f]{40}', manifest[field]):
@@ -109,7 +110,8 @@ def build_manifest(run):
                        'timeout': record['timeout'],
                        'result': record['result'],
                        'log_digest': record.get('log_digest', 'guest-native')})
-    manifest = {'schema': SCHEMA, 'run_id': run['run_id'], 'repository': 'baum777/Unitera_Systems',
+    manifest = {'schema': SCHEMA, 'run_id': run['run_id'],
+                'repository': run.get('repository', 'baum777/Unitera_Systems'),
                 'source_commit_sha': run['source_commit_sha'],
                 'source_artifact_digest': run['source_artifact_digest'],
                 'relay_commit_sha': run['relay_commit_sha'],

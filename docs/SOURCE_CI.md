@@ -75,6 +75,30 @@ PostgreSQL-, Docker-, Qt- and hosted-runtime families remain MISSING and each ne
 bounded profile extension (identified dependency: postgres service or testcontainers-in-guest,
 Qt 6.10 toolchain image, docker-in-guest re-qualification).
 
+## baum-os lane (W2.1 qualification 2026-10-28)
+
+Second source lane for `baum777/baum-os`, reusing the same controller / launcher / guest /
+verifier split with a dedicated profile:
+
+- Source pin: commit `d8f96217b121325ef1f4d46a8c3e5743e31fc0cb`, tree
+  `0aa6204a90375277e93f8d5e2394d88b1dbe21df`, 19874 files, 3 tracked symlinks, 17 gitlinks
+  (submodules carried as data; guest check c1b re-derives the tree identity in-guest via
+  `git update-index --add --cacheinfo 160000,<sha>,<path>`).
+- Toolchain: node 24.19.0 (same as the Systems lane), pnpm 11.9.0 (`vm/baum-lock.json`,
+  ESM layout with bin/dist entries plus worker.js), bash and git with 171 dpkg-verified
+  git-core files.
+- Dependencies: offline store plus the pnpm 11 metadata/verification cache shipped inside the
+  workspace image (HOME=/ws/work); a pure-exec shim binds `--offline --store-dir /ws/store`
+  to install commands only.
+- Plan `baum_governance`: five verbatim governance step scripts (g4-g8) copied from the
+  source commit (run_sha256-bound) and executed from /plan/…; guest native checks c1, c2, c1b.
+- Qualification: five-run synthetic requalification on this implementation (bundle
+  `7c867f6e…`, 2026-10-28, superseding six earlier defect-bound intermediates) and one
+  reference source-CI run `5028322e7d4846b5ac506d359f999c50` (26/26 checks PASS, vm_exit 33,
+  verifier ACCEPT). CI parity for baum-os is PARTIAL: 1 of 4 jobs, 5 of 17 run steps
+  (governance only); validate/reachability/gate-test families and the PG/Docker/Qt/hosted
+  families remain unsupported in this profile.
+
 ## Evidence
 
 Every run produces: console transcript, per-check exit codes/timeouts/log digests, cleanup

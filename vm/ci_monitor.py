@@ -39,7 +39,10 @@ ISOLATION_CHECKS = ['live_virtual_link', 'protected_host_canary', 'review_canary
                     'synthetic_file_created']
 PROTOCOL_NAME = re.compile(r'[a-z0-9][a-z0-9_-]*')
 CONFIG_KEYS = {'MODE', 'HOST_PORT', 'LAN_PROBE', 'HOST_CANARY_PATH', 'REVIEW_CANARY_PATH',
-               'STATUS_CANARY_PATH', 'DOCKER_CANARY_PATH', 'EXPECTED_FILE_COUNT', 'NODE_VERSION'}
+               'STATUS_CANARY_PATH', 'DOCKER_CANARY_PATH', 'EXPECTED_FILE_COUNT', 'NODE_VERSION',
+               'EXPECTED_TREE_SHA', 'EXPECTED_SYMLINK_COUNT', 'EXPECTED_GITLINK_COUNT'}
+BAUM_REPOSITORY = 'baum777/baum-os'
+SYSTEMS_REPOSITORY = 'baum777/Unitera_Systems'
 
 
 def assets(private):
@@ -84,6 +87,13 @@ def verify_prepared(assets_dir):
         raise ValueError('ci initrd digest mismatch')
     if prep['source']['commit'] is None:
         raise ValueError('prep manifest has no source commit')
+    current_guest_init = hashlib.sha256(
+        (Path(__file__).parent / 'ci_guest.sh').read_bytes()).hexdigest()
+    if ci_record.get('guest_init_sha256') != current_guest_init:
+        # Found live: a rebuilt overlay with a stale initrd asset made the guest read
+        # a plan path that no longer existed and pass vacuously. The image must embed
+        # the executor that is actually part of this reviewed implementation.
+        raise ValueError('ci initrd embeds a stale guest executor; rebuild the image')
     return prep, image_record, ci_record
 
 
@@ -123,7 +133,18 @@ def append_job_overlay(initrd_path, config, plan):
         validate_config_value(key, text)
         lines.append(key + '=' + shlex.quote(text))
     plan_text = ci_plan.serialize_plan(plan)
-    data = {'ci-config': ('\n'.join(lines).encode(), 0o600), 'plan': (plan_text.encode(), 0o600)}
+    # 'plan/commands' (not 'plan'): the plan directory also carries the verbatim
+    # workflow scripts, and a regular file cannot share its name with a directory.
+    data = {'ci-config': ('\n'.join(lines).encode(), 0o600),
+            'plan/commands': (plan_text.encode(), 0o600)}
+    # Verbatim workflow run-step bodies travel as digest-bound script files under /plan;
+    # each entry's argv already pins exactly this path (ci_plan.validate_script_entries).
+    for entry in plan:
+        if entry.get('script') is not None:
+            script_path = entry['script_path']
+            if not re.fullmatch(r'/plan/[a-z0-9-]+\.yml/[a-z0-9_-]+/[0-9]+\.sh', script_path):
+                raise ValueError('plan script path rejected: ' + script_path)
+            data[script_path.lstrip('/')] = (entry['script'].encode(), 0o600)
     return initrd_path.read_bytes() + gzip.compress(cpio(data), mtime=0)
 
 
@@ -176,6 +197,11 @@ def launch(private, plan_name, mode, abort_delay_s=None, deadline_s=None, guest_
               'STATUS_CANARY_PATH': canaries['status'][0], 'DOCKER_CANARY_PATH': unix_path,
               'EXPECTED_FILE_COUNT': prep['source']['file_count'],
               'NODE_VERSION': prep['toolchain']['node']['version']}
+    repository = prep.get('repository', SYSTEMS_REPOSITORY)
+    if repository == BAUM_REPOSITORY:
+        config['EXPECTED_TREE_SHA'] = prep['source']['git_tree_sha']
+        config['EXPECTED_SYMLINK_COUNT'] = prep['source']['symlink_count']
+        config['EXPECTED_GITLINK_COUNT'] = prep['source']['gitlink_count']
     (job_dir / 'initrd').write_bytes(append_job_overlay(assets_dir / 'ci-initrd', config, plan))
     unit = 'unitera-source-ci-' + run_id + '.scope'
     write_args_file(run_dir / 'launch' / 'argv.args',
@@ -183,8 +209,10 @@ def launch(private, plan_name, mode, abort_delay_s=None, deadline_s=None, guest_
     (run_dir / 'launch' / 'overlay.txt').write_text(str(assets_dir / 'ws-base.img') + '\n' + str(job_dir / 'ws.qcow2') + '\n')
     run = {'run_id': run_id, 'run_dir': str(run_dir), 'unit': unit, 'mode': mode,
            'abort_delay_s': abort_delay_s, 'profile': profile, 'plan_name': plan_name,
+           'repository': repository,
            '_config': {key: str(value) for key, value in config.items()},
            'source_commit_sha': prep['source']['commit'],
+           'git_tree_sha': prep['source'].get('git_tree_sha'),
            'source_artifact_digest': prep['source']['archive_sha256'],
            'vm_image_digest': ci_record['initrd_sha256'],
            'base_image_digest': image_record['sha256'],
@@ -393,6 +421,18 @@ def watch(run_dir_path, deadline_override=None):
                 if pids:
                     owned_scope = True
                     observed_pids.update(pids)
+                elif (run_dir / 'started-at.txt').exists() and time.monotonic() - started > 60:
+                    # Drained transient scope: this host's user manager can leave an
+                    # empty scope active indefinitely. Stop the owned empty scope so the
+                    # mechanical launcher unblocks and records the authoritative VM exit
+                    # code, then finish through the normal exited path.
+                    lane.systemctl('stop', unit)
+                    for _grace in range(20):
+                        if (run_dir / 'vm-exit.rc').exists():
+                            break
+                        time.sleep(1)
+                    outcome = 'exited'
+                    break
                 metrics = lane.scope_metrics(unit)
                 if metrics.get('memory.max') == str(int(int(profile['scope_memory_max'][:-1]) * 1024 * 1024)):
                     observed_limits = metrics
@@ -474,7 +514,7 @@ def watch(run_dir_path, deadline_override=None):
                       'overall_result': overall, 'isolation_result': 'PASS' if isolation_ok else 'FAIL'}
             (run_dir / 'evidence' / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
             executor_files = ['ci_monitor.py', 'ci_guest.sh', 'ci_plan.py', 'ci_image.py',
-                              'ci_start.sh', 'ci_util.py', 'ci_prep.py']
+                              'ci_start.sh', 'ci_util.py', 'ci_prep.py', 'baum_prep.py']
             vm_root = Path(__file__).parent
             executor_version = {name: sha256_file(vm_root / name) for name in executor_files}
             relay_head = (run_dir / 'relay-head.txt')

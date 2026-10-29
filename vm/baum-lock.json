@@ -1,0 +1,28 @@
+{
+  "schema": "relay.baum-lock.v1",
+  "repository": "baum777/baum-os",
+  "node": {
+    "url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.xz",
+    "tar_sha256": "14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647",
+    "version": "24.19.0",
+    "satisfies_engines": "24.x"
+  },
+  "pnpm": {
+    "url": "https://registry.npmjs.org/pnpm/-/pnpm-11.9.0.tgz",
+    "tar_sha512": "sha512-vWgtXQP+Ul73yf1ngMaITR51asTJyf4AxTh4KCQxDc+Q493E9Tg18G3669UIXkGFXgvLs7YN4qxburieUDbwOw==",
+    "tar_sha512_hex_from_package_manager": "bd682d5d03fe525ef7c9fd6780c6884d1e756ac4c9c9fe00c538782824310dcf90e3ddc4f53835f06dfaebd5085e41855e0bcbb3b60de2ac5bbab89e5036f03b",
+    "bin_entry": "package/bin/pnpm.mjs",
+    "bundle_entry": "package/dist/pnpm.mjs",
+    "worker_entry": "package/dist/worker.js",
+    "version": "11.9.0",
+    "matches_package_manager_pin": "pnpm@11.9.0"
+  },
+  "guest_image": {
+    "base": "same signed Alpine ISO as vm/image-lock.json",
+    "members": [
+      "boot/vmlinuz-virt",
+      "boot/initramfs-virt"
+    ]
+  },
+  "notes": "Pinned public vendor artifacts only. tar_sha512 is the registry/base64 form the lane verifier consumes; tar_sha512_hex_from_package_manager is the identical digest in the hex encoding baum-os commits in package.json packageManager (equality enforced by baum_prep.verify). pnpm 11 ships ESM: the bin wrapper imports ../dist/pnpm.mjs relatively, so the guest keeps the bin/dist layout. bash, git and the git-core helper directory come from dpkg-verified host files exactly like the node libraries. The offline dependency store is built from the pinned baum-os lockfile with lifecycle scripts disabled on the host; package scripts run only inside the qualified VM."
+}
