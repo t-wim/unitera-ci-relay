@@ -1,14 +1,18 @@
 {
   "schema": "relay.publication-policy.v1",
   "target_repository": "t-wim/unitera-ci-relay",
-  "base_sha": "75f0b6aeb0ff376c23b8d00779b7da323cd0fad5",
-  "candidate_branch": "codex/source-ci-executor-01",
+  "base_sha": "37d3edd38e736f3a05070c80bdf5a875ae9dc7cf",
+  "candidate_branch": "feat/marketing-python-vm-implementation-20261028",
   "allowed_files": [
+    ".github/workflows/marketing-ci-relay.yml",
     ".github/workflows/unitera-ci-relay.yml",
     ".github/workflows/unitera-relay-preflight.yml",
     ".gitignore",
     "README.md",
     "audit_publication.py",
+    "docs/MARKETING_CI.md",
+    "docs/MARKETING_PYTHON_VM_QUALIFICATION_2026-10-28.md",
+    "docs/MARKETING_VM_IMPLEMENTATION.md",
     "docs/REPAIR_STATE.md",
     "docs/SOURCE_CI.md",
     "docs/VM_LANE.md",
@@ -19,6 +23,9 @@
     "publication-policy.json",
     "test_candidate.py",
     "test_ci.py",
+    "test_marketing_ci_contract.py",
+    "test_marketing_vm_candidate.py",
+    "test_marketing_vm_lane.py",
     "test_vm.py",
     "vm/ci-lock.json",
     "vm/ci_guest.sh",
@@ -36,17 +43,33 @@
     "vm/image-lock.json",
     "vm/image.py",
     "vm/lane.py",
+    "vm/marketing-runtime-lock.json",
+    "vm/marketing_ci_contract.py",
+    "vm/marketing_guest.sh",
+    "vm/marketing_image.py",
+    "vm/marketing_manifest.py",
+    "vm/marketing_monitor.py",
+    "vm/marketing_plan.py",
+    "vm/marketing_prep.py",
+    "vm/marketing_qualify.py",
+    "vm/marketing_source_custody.py",
+    "vm/marketing_start.sh",
+    "vm/marketing_status_writeback.py",
+    "vm/marketing_verify.py",
+    "vm/marketing_vm_contract.py",
+    "vm/marketing_vm_qualification.py",
     "vm/paths.py",
     "vm/qualify.py"
   ],
   "reference_disclosure": {
     "target_repository": "Necessary destination, already known to its owner",
     "base_sha": "Already present in the destination repository; necessary ancestry binding",
-    "candidate_branch": "Locally chosen repair branch; necessary review destination",
+    "candidate_branch": "Locally chosen marketing implementation branch; necessary review destination",
     "source_references_embedded": false,
     "source_workflow_digests_embedded": false,
     "synthetic_fixture_digests_only": true,
-    "public_image_lock": "Public distribution URL, digest and public signing fingerprint; required image provenance, no private host-derived image digests"
+    "public_image_lock": "Public distribution URL, digest and public signing fingerprint; required image provenance, no private host-derived image digests",
+    "marketing_runtime_lock": "Distribution package names/versions and public Python version only; per-file digests stay in the private evidence manifests"
   },
   "merge_control": "PROCESS_ENFORCED",
   "qualification": {
@@ -57,8 +80,11 @@
     "MERGE_ELIGIBLE": true,
     "MERGED": false,
     "VM_ISOLATION_QUALIFIED": "FIVE_RUN_LEDGER_2026_10_27_HARDENED_FETCH",
-    "SOURCE_CI_EXECUTION": "QUALIFIED_PRIVATE_OWNER_REVIEW_PENDING"
+    "SOURCE_CI_EXECUTION": "QUALIFIED_PRIVATE_OWNER_REVIEW_PENDING",
+    "MARKETING_PYTHON_VM_QUALIFIED": "see docs/MARKETING_PYTHON_VM_QUALIFICATION_2026-10-28.md",
+    "MARKETING_STATUS_WRITEBACK": "NOT_ACTIVATED_OWNER_ADMISSION_REQUIRED",
+    "MARKETING_RUNNER_ADMISSION": "QUARANTINED_WORKFLOW_REMAINS_FAIL_CLOSED"
   },
-  "publication_authorized": "OWNER_ORDER_2026_10_27_ITEM_3_CI_EVIDENCE_INTEGRATION",
-  "publication_provenance": "vm/fetch.py SSRF hardening (guarded_urlopen port, redirect rejection, host allowlist with both pinned Alpine publishers, global-IP resolution check) plus host regression battery 98/98 PASS and a fresh five-run synthetic VM requalification bound to the hardened fetch.py digest (requal-hardening-20261027, VM_ISOLATION_QUALIFIED=true, 18 implementation files); source-CI PASS evidence: run e843f434d05a4b6290486a4c3e75f30a on Systems d297a165cd4d5b06c044bfa7b0c9e45859898030, 26/26 checks PASS, independent verifier ACCEPT"
+  "publication_authorized": "OWNER_REVIEW_REQUIRED_THIS_PR_EXTENDS_THE_ALLOWLIST_FOR_THE_MARKETING_PYTHON_VM_CANDIDATE",
+  "publication_provenance": "vm/fetch.py SSRF hardening plus host regression battery 98/98 PASS and a fresh five-run synthetic VM requalification bound to the hardened fetch.py digest (requal-hardening-20261027); source-CI PASS evidence: run e843f434d05a4b6290486a4c3e75f30a on Systems d297a165cd4d5b06c044bfa7b0c9e45859898030, 26/26 checks PASS, independent verifier ACCEPT. This candidate adds the marketing Python VM lane implementation and live five-run qualification evidence; exact run ids, digests and receipts are in docs/MARKETING_PYTHON_VM_QUALIFICATION_2026-10-28.md and the private evidence store. Allowlist extension and base_sha rebinding are part of this PR and require explicit owner review."
 }

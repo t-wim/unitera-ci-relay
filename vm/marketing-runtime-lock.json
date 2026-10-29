@@ -1,0 +1,19 @@
+{
+  "schema": "relay.marketing-runtime-lock.v1",
+  "runtime": "cpython",
+  "python_version": "3.14.4",
+  "provenance": "installed Ubuntu distribution packages, dpkg-owned and md5-verified via the same verified_system_file gate as the qualified source-CI lane; no pip, no downloads during build or guest execution",
+  "packages": {
+    "python3.14-minimal": "3.14.4-1ubuntu0.2",
+    "libpython3.14-minimal": "3.14.4-1ubuntu0.2",
+    "libpython3.14-stdlib": "3.14.4-1ubuntu0.2"
+  },
+  "binary": "/usr/bin/python3.14",
+  "stdlib_root": "/usr/lib/python3.14",
+  "stdlib_excludes": ["__pycache__"],
+  "guest_image": {
+    "base": "same signed Alpine ISO as vm/image-lock.json",
+    "members": ["boot/vmlinuz-virt", "boot/initramfs-virt"]
+  },
+  "notes": "The lock pins the exact distribution package versions; every runtime file is re-verified against the dpkg checksum database at build time and against the recorded SHA-256 manifest inside the guest before any source test executes."
+}

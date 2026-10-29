@@ -17,20 +17,35 @@ from marketing_status_writeback import payload, send
 SOURCE = "a" * 40
 RELAY = "b" * 40
 
+# Offline plan-bound fixtures mirroring the real lane's receipt shapes:
+# success -> production battery; failure -> q2 fixture; timeout -> q3 fixture;
+# cancel -> production plan torn down while holding (no completed logs).
+FIXTURE_LOGS = {
+    "production": [(name, list(argv), 0, False) for name, _, argv in PLAN],
+    "q2_deliberate_failure": [("fixture_deliberate_failure",
+                              ["python3", "/fixtures/exit-one.py"], 1, False)],
+    "q3_resource_timeout": [("fixture_hold_timeout",
+                             ["python3", "/fixtures/hold.py"], 124, True)],
+}
+
 def fixture(root, outcome="success", run_id="1" * 32):
     root.mkdir(parents=True, exist_ok=True)
     logs_dir = root / "logs"
     logs_dir.mkdir(exist_ok=True)
+    test_plan = {"success": "production", "failure": "q2_deliberate_failure",
+                 "timeout": "q3_resource_timeout", "cancel": "production"}[outcome]
     logs = {}
-    for name, _, argv in PLAN:
-        data = (name + "\n").encode()
-        (logs_dir / (name + ".log")).write_bytes(data)
-        logs[name] = {"argv": list(argv), "exit_code": 0,
-                      "timeout": False, "sha256": hashlib.sha256(data).hexdigest()}
+    if outcome != "cancel":
+        for name, argv, exit_code, timeout in FIXTURE_LOGS[test_plan]:
+            data = (name + "\n").encode()
+            (logs_dir / (name + ".log")).write_bytes(data)
+            logs[name] = {"argv": argv, "exit_code": exit_code,
+                          "timeout": timeout, "sha256": hashlib.sha256(data).hexdigest()}
     record = {
         "schema": "relay.marketing-vm-receipt.v1",
         "repository": "baum777/unitera_marketing_agent-team",
         "source_sha": SOURCE, "relay_sha": RELAY, "run_id": run_id,
+        "test_plan": test_plan,
         "execution_profile": "marketing-python-vm-v1",
         "source_archive": {"sha256": "c"*64},
         "guest_image": {"sha256": "d"*64},

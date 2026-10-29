@@ -53,3 +53,34 @@ def send(candidate, token, *, post=None):
         raise RuntimeError("unexpected status response; independent readback required")
     return {"source_sha": candidate["sha"], "context": STATUS_CONTEXT,
             "provider_accepted": True, "independent_readback_required": True}
+
+
+def readback(sha, token, *, get=None, expect_state="success"):
+    """Independent GET readback after a status POST; binds exact SHA and context.
+
+    Uses a separate request path from the write. A missing context, a different
+    target SHA or a state other than the expected one is a hard failure; an
+    ambiguous network result stays unknown and never counts as delivered."""
+    if not isinstance(sha, str) or not SHA.fullmatch(sha):
+        raise ValueError("invalid source SHA for readback")
+    req = Request("https://api.github.com/repos/baum777/unitera_marketing_agent-team/commits/"
+                  + sha + "/status", method="GET",
+                  headers={"Authorization": "Bearer " + token,
+                           "Accept": "application/vnd.github+json",
+                           "X-GitHub-Api-Version": "2022-11-28"})
+    try:
+        with (get or build_opener(NoRedirect()).open)(req, timeout=20) as response:
+            payload = json.loads(response.read(65536).decode("utf-8"))
+    except HTTPError as exc:
+        raise RuntimeError("status readback rejected HTTP " + str(exc.code)) from None
+    except (URLError, TimeoutError, OSError, ValueError):
+        raise RuntimeError("status readback unknown; delivery unverified") from None
+    if payload.get("sha") != sha:
+        raise RuntimeError("readback SHA mismatch")
+    for entry in payload.get("statuses", []):
+        if entry.get("context") == STATUS_CONTEXT:
+            if entry.get("state") != expect_state:
+                raise RuntimeError("readback state mismatch: " + str(entry.get("state")))
+            return {"source_sha": sha, "context": STATUS_CONTEXT,
+                    "state": entry["state"], "readback_verified": True}
+    raise RuntimeError("readback context absent; delivery unverified")
