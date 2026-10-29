@@ -261,12 +261,37 @@ class TypedTreeTests(unittest.TestCase):
             (prep / 'staging-src' / '.quarantine' / 'node_modules').symlink_to('../a.txt')
             (prep / 'store-build.rc').write_text('0\n')
             with patch('baum_prep.private_path', lambda value: Path(value)):
-                result = baum_prep.disk(private, 'a' * 40, {'symlinks': [], 'gitlinks': []})
+                result = baum_prep.disk(private, 'a' * 40,
+                                        {'commit': 'a' * 40, 'symlinks': [], 'gitlinks': []})
             src = prep / 'disk' / 'src'
             self.assertEqual((src / 'a.txt').read_text(), 'A\n')
             self.assertFalse((src / 'node_modules').exists())
             self.assertTrue((src / '.quarantine' / 'node_modules').is_symlink())
             self.assertIn('steps3', result)
+
+    def test_host_store_build_disables_pnpmfile_hooks(self):
+        # P1 regression: --ignore-scripts does not disable pnpmfile hooks, so the
+        # trusted-host store build must pass --ignore-pnpmfile explicitly.
+        line = baum_prep.host_store_install_command(
+            Path('/h'), Path('/usr/bin/node'), Path('/assets'), Path('/prep'))[0]
+        self.assertIn('install --frozen-lockfile --ignore-scripts --ignore-pnpmfile --store-dir', line)
+        self.assertIn('npm_config_manage_package_manager_versions=false', line)
+
+    def test_disk_rejects_verified_payload_for_another_commit(self):
+        # P1 regression: a caller-supplied --sha differing from the verified payload
+        # would pin a PASS to a commit whose tree/archive was never verified.
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaises(ValueError):
+                baum_prep.disk(Path(temp), 'b' * 40,
+                               {'commit': 'a' * 40, 'symlinks': [], 'gitlinks': []})
+
+    def test_finalize_rejects_verified_payload_for_another_commit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaises(ValueError):
+                baum_prep.finalize(Path(temp), 'b' * 40, {'commit': 'a' * 40})
+            with self.assertRaises(ValueError):
+                # a verified payload without a commit binding is equally unusable
+                baum_prep.finalize(Path(temp), 'a' * 40, {})
 
 
 class BaumManifestTests(unittest.TestCase):
@@ -456,6 +481,20 @@ class VerifierHardeningTests(unittest.TestCase):
         self.patch_result(run, host_service_positive_controls={'127.0.0.1': True, 'lan': False})
         _m, problems = verify_baum(run, self.private)
         self.assertTrue(any('positive controls' in problem for problem in problems), problems)
+
+    def test_pass_with_failure_vm_exit_rejected(self):
+        # P2 regression: an all-PASS manifest over a raw vm_exit of 35 (or no exit
+        # code) is inconsistent evidence and must not be accepted.
+        run = self.make('r3b')
+        self.patch_result(run, vm_exit=35)
+        _m, problems = verify_baum(run, self.private)
+        self.assertTrue(any('exit code 33' in problem for problem in problems), problems)
+
+    def test_pass_without_recorded_vm_exit_rejected(self):
+        run = self.make('r3c')
+        self.patch_result(run, vm_exit=None)
+        _m, problems = verify_baum(run, self.private)
+        self.assertTrue(any('exit code 33' in problem for problem in problems), problems)
 
     def test_manifest_vm_digest_not_bound_to_prepared_image_rejected(self):
         run = self.make('r4')

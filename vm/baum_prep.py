@@ -215,6 +215,27 @@ def _verify_archive(archive_path, regular, symlinks):
     return destination, inventory, verified_symlinks
 
 
+def host_store_install_command(home, node_bin, assets, prep):
+    """Trusted-host offline store build line for steps2.sh.
+
+    Every flag here is a host-safety contract, not packaging taste:
+    - manage-package-manager-versions stays off: the executor must run exactly the
+      repository-pinned pnpm 11.9.0 vendored above, never an ambient one.
+    - --ignore-scripts keeps package lifecycle scripts out of the trusted host.
+    - --ignore-pnpmfile is NOT optional: --ignore-scripts does not disable pnpmfile
+      hooks (ignorePnpmfile defaults to false), and a source .pnpmfile.cjs/.mjs would
+      otherwise run untrusted Node code on this host. Hooks may run inside the guest only.
+    """
+    q = shlex.quote
+    return [
+        'env -i PATH=/usr/bin:/bin HOME=' + q(str(home)) + ' XDG_DATA_HOME=' + q(str(home / '.local/share')) +
+        ' npm_config_manage_package_manager_versions=false' +
+        ' ' + q(str(node_bin)) + ' ' + q(str(assets / 'pnpm-pkg' / 'bin' / 'pnpm.mjs')) +
+        ' install --frozen-lockfile --ignore-scripts --ignore-pnpmfile --store-dir ' + q(str(assets / 'store')) +
+        ' > ' + q(str(prep / 'store-build.log')) + ' 2>&1 || rc=$?',
+    ]
+
+
 def verify(private, commit):
     private = private_path(private)
     prep = private / 'prep'
@@ -299,13 +320,7 @@ def verify(private, commit):
     write_script(prep / 'steps2.sh', [
         'cd ' + q(str(staging_src)),
         'rc=0',
-        '# manage-package-manager-versions stays off: the executor must run exactly the',
-        '# repository-pinned pnpm 11.9.0 vendored above, never an ambient one.',
-        'env -i PATH=/usr/bin:/bin HOME=' + q(str(home)) + ' XDG_DATA_HOME=' + q(str(home / '.local/share')) +
-        ' npm_config_manage_package_manager_versions=false' +
-        ' ' + q(str(node_bin)) + ' ' + q(str(assets / 'pnpm-pkg' / 'bin' / 'pnpm.mjs')) +
-        ' install --frozen-lockfile --ignore-scripts --store-dir ' + q(str(assets / 'store')) +
-        ' > ' + q(str(prep / 'store-build.log')) + ' 2>&1 || rc=$?',
+    ] + host_store_install_command(home, node_bin, assets, prep) + [
         'echo "$rc" > ' + q(str(prep / 'store-build.rc')),
         'exit "$rc"',
     ])
@@ -328,7 +343,18 @@ def verify(private, commit):
             'symlinks': symlinks, 'gitlinks': gitlinks, 'toolchain': toolchain}
 
 
+def _require_verified_commit(commit, verified, phase):
+    # A verified payload describes exactly one source commit; a caller-supplied
+    # --sha may not differ from it, or a PASS would be pinned to a commit whose
+    # tree/archive was never verified.
+    if not isinstance(verified, dict) or verified.get('commit') != commit:
+        described = verified.get('commit') if isinstance(verified, dict) else None
+        raise ValueError(phase + ': verified payload describes commit ' + repr(described) +
+                         ', not the requested ' + repr(commit))
+
+
 def disk(private, commit, verified):
+    _require_verified_commit(commit, verified, 'disk')
     private = private_path(private)
     prep = private / 'prep'
     assets = assets_dir(private)
@@ -372,6 +398,7 @@ def disk(private, commit, verified):
 
 
 def finalize(private, commit, verified):
+    _require_verified_commit(commit, verified, 'finalize')
     private = private_path(private)
     assets = assets_dir(private)
     prep = private / 'prep'

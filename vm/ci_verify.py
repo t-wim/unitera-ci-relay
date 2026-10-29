@@ -147,6 +147,13 @@ def raw_result_problems(result_json, manifest):
     for field in ('limits_verified', 'inputs_unchanged'):
         if result_json.get(field) is not True:
             problems.append('result.json lacks ' + field + ' for a PASS run')
+    # The guest contract is exit 33 == GUEST_ALL_CHECKS_PASSED; the monitor's own
+    # aggregation requires it for an all-PASS run. Re-derive it independently so a
+    # PASS claim over inconsistent failure-exit evidence (or a missing exit code)
+    # cannot be accepted even if every other raw field looks right.
+    if result_json.get('vm_exit') != 33:
+        problems.append('PASS run does not record the all-checks-passed VM exit code 33'
+                        ' (got ' + repr(result_json.get('vm_exit')) + ')')
     positives = result_json.get('host_service_positive_controls')
     if not isinstance(positives, dict) or not positives or not all(positives.values()):
         problems.append('host positive controls not all true')

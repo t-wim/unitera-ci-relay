@@ -31,8 +31,17 @@ configuration/hooks during host preparation. No host package preparation was exe
 KVM API availability is capability evidence only. t-wim custody, host execution authority,
 source/review/status authority and current-image five-run qualification remain separate.
 Historical five-run data and signed image provenance cannot admit this changed candidate.
-`publication-policy.json` is unchanged: its older allowlist/order does not authorize these
-new baum-os files or activation. Update/review it only under an applicable owner gate.
+
+Status of this document: the paragraphs above describe the candidate **as authored**
+(historical snapshot at `0f10225c`, before any publication review). Since then the W2.2
+owner order of 2026-10-29 authorized publication review, and `publication-policy.json`
+was reconciled accordingly — first to base `37d3edd`, then, after marketing PR #8 merged,
+replaced verbatim with the owner-provided combined version for base `58ecbb7d`
+(review 5696470035: baum-os files inside the reviewed allowlist, `MERGE_ELIGIBLE=false`,
+combined publication review requiring explicit owner approval). The qualification and
+readiness statements in this file remain revision-scoped to the evidence recorded in
+`docs/SOURCE_CI.md`, `docs/VORGAENGE_LOG.md` and the private ledgers; they are not
+activation, admission or merge claims.
 
 Source/VM manifest integration, full image/toolchain/plan trust anchors, non-root guest
 supervision, complete raw job logs, actual cleanup/failure battery and independently held
