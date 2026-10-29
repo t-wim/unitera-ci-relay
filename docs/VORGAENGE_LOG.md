@@ -83,3 +83,25 @@ leak into the workspace image) were caught by the controller's own fail-closed c
 were no-ops; both root causes are fixed in code. No workflow enablement, runner
 registration, status writeback, source merge, push or token use occurred. Private assets,
 ledgers and run evidence stay outside the publication tree.
+
+## 2026-10-28/29 — baum-os source-CI profile (W2.1) and publication reconciliation (W2.2)
+
+Owner/scope: second source-CI lane for baum777/baum-os on the quarantined relay, under the
+W2.1 owner assignment (custody closure, VM qualification, independent verifier, exactly one
+reference run) and the W2.2 owner order (evidence freeze, publication-policy reconciliation,
+review PR; runner admission only after separate release). New files: vm/baum-lock.json,
+vm/baum_prep.py, vm/baum_ci_custody.py, vm/baum_status_candidate.py, test_baum_profile.py,
+test_w2.py, docs/BAUM_W2_QUALIFICATION.md; hardened vm/ci_verify.py (asset re-derivation,
+raw-result cross-checks, stale-initrd launch guard, verifier revision pin) and extended
+ci_guest/ci_image/ci_manifest/ci_monitor/ci_plan/ci_start/image. Qualification: fresh
+five-run synthetic VM ledger on this implementation (bundle 7c867f6e, 27 implementation
+digests re-verified at freeze) after seven candidate defects were caught live by the gates
+(cpio plan-file collision, stale initrd overlay, dropped tracked symlink, pnpm 11 offline
+store/metadata handling, exit-code recording) and fixed with regression tests; one reference
+source-CI run 5028322e on baum-os d8f96217 (tree 0aa6204a, 26/26 checks PASS, vm_exit 33,
+verifier ACCEPT, ledger collisions=0). CI parity honestly PARTIAL: 1 of 4 jobs, 5 of 17 run
+steps. W2.2 froze all evidence under digest 4e75c4ca, reconciled publication-policy.json to
+the current base 37d3edd and the W2.2 owner order, and opened the review branch. No workflow
+enablement, runner registration, status writeback, source merge or token use occurred; merge
+and runner dispatch remain owner gates. Private assets, ledgers and run evidence stay
+outside the publication tree.
