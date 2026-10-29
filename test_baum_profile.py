@@ -3,6 +3,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -23,7 +24,8 @@ from ci_prep import git_blob_sha  # noqa: E402
 
 SOURCE_SHA = 'd8f96217b121325ef1f4d46a8c3e5743e31fc0cb'
 SOURCE_TREE = '0aa6204a90375277e93f8d5e2394d88b1dbe21df'
-SOURCE_REPO = Path('/home/baum/workspace/baum-os')
+SOURCE_REPO = Path(os.environ.get('BAUM_OS_CHECKOUT',
+                                  str(Path.home() / 'workspace' / 'baum-os')))
 PACKAGE_MANAGER_PIN = ('pnpm@11.9.0+sha512.bd682d5d03fe525ef7c9fd6780c6884d1e756ac'
                        '4c9c9fe00c538782824310dcf90e3ddc4f53835f06dfaebd5085e41855e'
                        '0bcbb3b60de2ac5bbab89e5036f03b')
